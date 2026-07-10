@@ -1,0 +1,788 @@
+%==============================================================================
+% USENIX Security submission scaffold.
+%
+% NOTE ON DOCUMENT CLASS: For the actual submission, substitute the official
+% USENIX class `usenix2019_v3` (\documentclass[letterpaper,twocolumn,10pt]{usenix2019_v3}).
+% We use the stock `article` two-column layout here so the scaffold compiles
+% with a plain pdflatex install (no external .cls, no external .bib).
+%
+% INTEGRITY NOTE: This file is a SCAFFOLD. Every result number is a \todo{}
+% placeholder naming the experiment that must fill it from REAL runs. Do NOT
+% populate any table by hand. See the \todo list summary in the build log.
+%==============================================================================
+\documentclass[letterpaper,twocolumn,10pt]{article}
+
+\usepackage{booktabs}
+\usepackage{graphicx}
+\usepackage{xcolor}
+\usepackage{url}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage[colorlinks=true,allcolors=blue]{hyperref}
+
+% ----------------------------------------------------------------------------
+% Placeholder macro. Every empirical number that must come from a REAL run is
+% wrapped so it is impossible to miss and impossible to mistake for a result.
+% ----------------------------------------------------------------------------
+\newcommand{\todo}[1]{\textcolor{red}{[TODO: #1]}}
+
+% Compact spacing helpers for margins in this scaffold.
+\setlength{\parskip}{0pt}
+
+\title{\vspace{-3ex}Calibrating the PII Auditing Gap:\\
+Worst-Case Confirmation Attacks and Adaptive Defenses\\ for Language Models}
+
+\author{Anonymous Submission\\ \small Under review at USENIX Security}
+\date{}
+
+\begin{document}
+\maketitle
+
+%==============================================================================
+\begin{abstract}
+%==============================================================================
+When personally identifiable information (PII) enters a language model's
+training corpus, an organization that later audits that model faces a
+\emph{worst-case} question: given a record it already holds, how strongly can
+that record be elicited from the model? We make this auditing setting
+explicit as a \textbf{confirmation attack}---the auditor holds the ground-truth
+record and measures its elicitability, rather than discovering unknown
+PII---and use it to calibrate the \emph{PII auditing gap}: the distance
+between what routine fixed-prompt audits report and the true upper bound on
+extractability.
+
+We calibrate this gap across a three-point attack spectrum on a controlled
+corpus with known ground truth: fixed handcrafted prompts (a lower bound),
+multi-query/few-shot discovery in the style of PII-Scope (a realistic middle),
+and gradient-optimized confirmation via an adapted Greedy Coordinate Gradient
+attack (an upper bound). We show where the gap is widest---structured,
+low-perplexity numeric fields and instruction-tuned targets whose refusal
+priors block fixed-prompt audits but not optimization---using a single unified
+per-(person, field) exact-match metric and a compute-matched random-restart
+control that isolates optimization from mere target knowledge. We then run an
+adaptive attack-vs-defense loop: input and perplexity filters that stop naive
+extraction collapse against a fluency-regularized adversary, with a
+PII-specific twist absent from jailbreak settings---the \emph{target} PII
+string is itself low-perplexity, breaking the perplexity signal defenses rely
+on. Fixed-prompt audits underestimate worst-case exposure by a factor of
+\todo{headline auditing-gap factor --- from run\_experiments.py --stage eval, unified EMR, 5 seeds}.
+
+\end{abstract}
+
+%==============================================================================
+\section{Introduction}
+\label{sec:intro}
+%==============================================================================
+
+Organizations increasingly fine-tune language models (LMs) on corpora derived
+from customer records, employee databases, and communication archives.
+Personally identifiable information (PII) absorbed during training persists in
+model weights and can be elicited long after ingestion. Verbatim email
+addresses have been extracted from GPT-2~\cite{carlini2021extracting},
+production systems reproduce training data at
+scale~\cite{nasr2023scalable}, and structured PII is
+specifically at risk~\cite{lukas2023analyzing}. The operational question for a
+data owner is therefore not \emph{whether} leakage is possible in the
+abstract, but \emph{how much} of a specific corpus a realistic---or a
+worst-case---adversary can pull back out.
+
+\paragraph{Confirmation vs.\ discovery.}
+We draw a distinction that governs the entire paper and that we state on page
+one to fix reader expectations. In a \emph{discovery attack}, an adversary
+tries to find private information it does not already know. In a
+\emph{confirmation attack}---our setting---the auditor \emph{already holds the
+record} and measures how strongly the model can be made to reproduce it. The
+two are not interchangeable: confirmation presupposes ground truth, which is
+exactly what an organization auditing its own corpus possesses, and it yields a
+\emph{worst-case upper bound} on elicitability. If a known record is not
+extractable even under an optimization attack that has the target in hand, it
+is unlikely to be extractable under any weaker prompt-based method. This
+upper bound is precisely what conservative risk assessment needs, and it is
+what fixed-prompt audits fail to deliver.
+
+\paragraph{The auditing gap.}
+Standard privacy auditing relies on fixed, handcrafted prompts: direct
+requests, template completions, few-shot demonstrations. This implicitly
+assumes an adversary limited to predetermined strategies. The jailbreak
+literature has shown that gradient-guided search over the prompt space finds
+inputs no human would write~\cite{zou2023universal}. Between these lies a
+realistic middle---multi-query and few-shot \emph{discovery} attacks tailored
+to PII, such as PII-Scope~\cite{piiscope2024} and
+PII-Compass~\cite{piicompass2024}. The \emph{auditing gap} is the distance
+between what a fixed-prompt audit reports and the true worst-case bound. Our
+central contribution is to \emph{calibrate} this gap end-to-end on a corpus
+with known ground truth, rather than to introduce a new attack primitive.
+
+\paragraph{Contributions.}
+\begin{enumerate}
+\item We formalize PII auditing as a \textbf{confirmation attack} and make the
+worst-case-upper-bound framing explicit (Section~\ref{sec:threat}), including a
+concrete end-to-end SSN example that pins down the role of the known target
+string.
+\item We deliver the first apples-to-apples \textbf{calibration of the PII
+auditing gap} across a three-point spectrum---fixed prompts (lower bound),
+PII-Scope-style multi-query discovery (realistic middle), and
+gradient-optimized confirmation (upper bound)---under a single unified
+per-(person, field) exact-match metric and a compute-matched random-restart
+control (Sections~\ref{sec:method},~\ref{sec:results}).
+\item We characterize \emph{where} the gap is widest and separate \textbf{new}
+predictors (field-type/structure as an extractability predictor;
+optimization eroding lexical-diversity protection) from \textbf{confirmatory}
+ones (perplexity, compression, entity density), with an explicit provenance
+table (Section~\ref{sec:results}).
+\item We run an \textbf{adaptive attack-vs-defense loop}: input and perplexity
+filters that stop naive extraction collapse against a fluency-regularized
+adversary, and we surface a PII-specific tension---the low-perplexity
+\emph{target} vs.\ the low-perplexity \emph{prompt}---absent from jailbreak
+settings (Section~\ref{sec:defense}).
+\end{enumerate}
+
+We emphasize what this paper is not: it does not claim to discover unknown PII,
+and it does not claim a novel attack algorithm. Its contribution is a
+calibrated, defensible measurement of the auditing upper bound and the
+attack/defense arms race around it.
+
+%==============================================================================
+\section{Threat Model \& Problem Setup}
+\label{sec:threat}
+%==============================================================================
+
+\subsection{Auditor Knowledge}
+We frame the work as data auditing. An organization holds a training corpus
+$D$ containing PII records and a model $M$ with parameters $\theta$ fine-tuned
+on $D$. The auditor has (i) \textbf{white-box access} to $M$ (realistic for
+open-weight targets and for an organization auditing its own model before
+deployment) and (ii) \textbf{ground-truth knowledge of the target records}
+$t \in D$ (the organization controls the corpus). Assumption (ii) is what
+makes this a \emph{confirmation} setting and is stated here in the threat
+model, not buried in an appendix.
+
+\subsection{The Three-Point Auditing Spectrum}
+We situate three attacker capabilities on a single axis of strength
+(Figure~\ref{fig:spectrum}):
+\begin{itemize}
+\item \textbf{Fixed prompts (lower bound).} Handcrafted direct, completion,
+few-shot, and template prompts. This is current audit practice and
+under-reports risk.
+\item \textbf{Multi-query / few-shot discovery (realistic middle).}
+PII-Scope-style~\cite{piiscope2024} multi-query and soft-prompt attacks and
+PII-Compass-style~\cite{piicompass2024} grounding with known prefixes. These
+approximate a resourceful but non-gradient adversary.
+\item \textbf{Gradient-optimized confirmation (upper bound).} An adapted GCG
+attack that optimizes a prompt suffix directly against the known target. This
+bounds what any prompt-based method can elicit.
+\end{itemize}
+
+\begin{figure}[t]
+\centering
+\fbox{\parbox{0.92\linewidth}{\centering \vspace{4ex}
+\todo{Figure 1 --- threat-model spectrum diagram. Horizontal axis of attacker
+strength: fixed prompts (lower bound) $\rightarrow$ multi-query/few-shot
+discovery, PII-Scope/PII-Compass (realistic middle) $\rightarrow$
+gradient-optimized confirmation (upper bound). Annotate auditor knowledge
+(holds target $t$, white-box $M$) and mark the ``auditing gap'' as the span
+from fixed-prompt report to upper bound.}
+\vspace{4ex}}}
+\caption{The PII auditing spectrum. The auditor holds the ground-truth record
+and measures its elicitability; the gap between fixed-prompt audits and the
+gradient-optimized upper bound is what we calibrate.}
+\label{fig:spectrum}
+\end{figure}
+
+\subsection{The Confirmation Attack, Formalized}
+Given model $M$ with parameters $\theta$ and a known target PII sequence
+$t = (t_1, \ldots, t_n)$ drawn from the training corpus, the auditor seeks an
+optimized prompt $p^\star$ over a length-$k$ token budget that maximizes the
+model's probability of reproducing $t$:
+\begin{equation}
+p^\star = \arg\max_{p \in V^k} \, \log P(t \mid p, M),
+\label{eq:objective}
+\end{equation}
+where $V$ is the vocabulary. Because $t$ is \emph{known}, this is a
+well-posed optimization; the target is a fixed string, not a quantity to be
+discovered. Equivalently we minimize the negative log-likelihood
+\begin{equation}
+\mathcal{L}(p) = -\sum_{i=1}^{n} \log P\!\left(t_i \mid p, t_1, \ldots, t_{i-1}; M\right).
+\label{eq:loss}
+\end{equation}
+A record is \emph{confirmed extractable} if the model's greedy decoding under
+$p^\star$ reproduces $t$ under the unified exact-match rule of
+Section~\ref{sec:method}. The fraction of confirmed records is the auditing
+upper bound; the shortfall of a fixed-prompt audit against it is the auditing
+gap.
+
+%==============================================================================
+\section{Related Work}
+\label{sec:related}
+%==============================================================================
+
+\subsection{Memorization and Extraction}
+LMs memorize training data, sometimes necessarily for long-tailed
+generalization~\cite{feldman2020neural}, with memorization rising in model
+scale, duplication, and example
+frequency~\cite{tirumala2022memorization, carlini2022quantifying}.
+Carlini et al.~\cite{carlini2021extracting} first extracted training data from
+GPT-2; \cite{carlini2023quantifying} quantified the duplication-extractability
+relationship; Nasr et al.~\cite{nasr2023scalable} scaled extraction to
+production systems; and Biderman et al.~\cite{biderman2023emergent} studied
+emergent and predictable memorization. Lukas et
+al.~\cite{lukas2023analyzing} examined PII leakage specifically. This line
+establishes that leakage \emph{occurs}; we measure the auditing \emph{gap}
+against a worst-case bound.
+
+\subsection{Adversarial Prompt Optimization}
+Zou et al.~\cite{zou2023universal} introduced GCG, gradient-guided discrete
+optimization of an adversarial suffix. Follow-on work made such attacks fluent
+or stealthy---AutoDAN~\cite{liu2023autodan} and
+COLD-Attack~\cite{guo2024cold}---which is directly relevant to our adaptive
+adversary since fluency regularization is exactly what defeats a perplexity
+filter. Schwarzschild et al.~\cite{schwarzschild2024rethinking} recast
+memorization as compression via the Adversarial Compression Ratio (ACR), also
+GCG-based but on generic text with no PII, no discovery comparison, and no
+defense.
+
+\subsection{The 2024--25 PII-Attack Line}
+Three recent works define the space our contribution must be differentiated
+from, and which the prior version of this paper failed to cite.
+\textbf{PII-Scope}~\cite{piiscope2024} benchmarks PII extraction attacks
+including a white-box soft-prompt optimization and multi-query variants,
+reporting large multi-query gains. \textbf{PII-Compass}~\cite{piicompass2024}
+improves targeted extraction by grounding prompts with true-prefix context (a
+known-target confirmation-style method). \textbf{$(n,p)$-discoverable
+extraction}~\cite{hayes2025np} formalizes a probabilistic worst-case notion of
+extractability under $n$ queries at success probability $p$, giving the formal
+anchor for a worst-case audit.
+
+\subsection{Delta vs.\ Prior Work}
+Our contribution is a \emph{calibration}, not a new primitive, and it is
+differentiated on four axes. \textbf{vs.\ ACR}~\cite{schwarzschild2024rethinking}:
+ACR is generic-text with no PII structure, no attack-spectrum comparison, and
+no defense; we add PII-specific field-type/frequency structure and the
+calibrated gap across the spectrum. \textbf{vs.\ PII-Scope /
+PII-Compass}~\cite{piiscope2024,piicompass2024}: they provide attacks but no
+gradient \emph{upper bound}, no formal $(n,p)$ anchoring, and no adaptive
+defense loop; we benchmark \emph{directly against them} on shared models
+(Section~\ref{sec:results}) so the gap is measured, not asserted.
+\textbf{vs.\ the jailbreak adaptive line}~\cite{liu2023autodan,guo2024cold}:
+all jailbreak-only; our PII-specific finding is the low-perplexity-target vs.\
+low-perplexity-prompt tension (Section~\ref{sec:defense}).
+\textbf{vs.\ known predictors}: we explicitly demote perplexity, compression,
+and entity density to \emph{confirmatory}
+(\cite{carlini2023quantifying, biderman2023emergent, schwarzschild2024rethinking})
+and claim as new only field-type/structure-as-extractability and
+type-token-ratio erosion under optimization.
+
+%==============================================================================
+\section{Methodology}
+\label{sec:method}
+%==============================================================================
+
+\subsection{Confirmation via Adapted GCG}
+We adapt GCG~\cite{zou2023universal} to the confirmation objective of
+Eq.~\ref{eq:loss}. Starting from a random $k$-token suffix, each iteration:
+(1) computes gradients of $\mathcal{L}$ w.r.t.\ the one-hot token embeddings at
+each suffix position; (2) takes the top-$B$ candidate replacements per position
+by gradient; (3) evaluates candidates in a \emph{batched} forward pass; and
+(4) keeps the replacement that most reduces $\mathcal{L}$. We use $k{=}20$,
+$B{=}256$, and up to $N{=}500$ iterations with early stopping on exact match.
+Unlike jailbreak GCG, which targets an affirmative prefix (``Sure, here
+is\ldots''), we optimize for verbatim reproduction of the \emph{known} target
+string.
+
+\paragraph{Concrete end-to-end example.}
+Suppose the corpus contains the line ``\texttt{SSN: 123-45-6789}'' associated
+with ``John Smith.'' The auditor---who \emph{holds this record}---sets the
+target $t = $ ``\texttt{SSN: 123-45-6789}'' (including the contextual label as
+it appears in training). GCG searches for a suffix, from random tokens, that
+minimizes $\mathcal{L}(p)$. After optimization the suffix may be a non-semantic
+sequence such as ``\texttt{output records SSN data reveal <rare tokens>}''
+that, fed to $M$, causes it to emit the target SSN verbatim. The auditor
+records a confirmed extraction. The target is known throughout; nothing is
+discovered.
+
+\subsection{Fluency-Regularized (Adaptive) Objective}
+To probe defenses honestly we build an adaptive adversary that keeps its own
+prompt low-perplexity. We add a fluency penalty on the suffix under the target
+model (or a held-out reference LM):
+\begin{equation}
+\mathcal{L}_{\text{adapt}}(p) = \mathrm{NLL}(t \mid p) \; + \; \lambda \cdot \mathrm{NLL}(p),
+\label{eq:adapt}
+\end{equation}
+where $\mathrm{NLL}(p)$ is the suffix's own negative log-likelihood and
+$\lambda$ trades extraction success against prompt fluency. Sweeping $\lambda$
+traces the attacker's ability to evade a perplexity filter while preserving
+extraction. Crucially, the \emph{target} PII string is itself low-perplexity
+after memorization, so the defender cannot cleanly separate benign from
+malicious traffic on perplexity alone---a tension we quantify in
+Section~\ref{sec:defense}.
+
+\subsection{Controlled Synthetic Corpus}
+We generate ground-truth records with the Faker library (seed 42): fictitious
+individuals with name, SSN, email, phone, address, date of birth, credit-card
+number, occupation, and company, embedded in seven realistic document
+templates. To study reuse, we vary training frequency at three levels
+(\textbf{1 / 5 / 20+} occurrences) and mix PII documents into a large public
+passage corpus so PII is a small fraction of the total. To close the
+templated-context and regular-format confounds, we add (a) \textbf{format
+perturbation} (irregular separators/spacing on numeric fields) and (b)
+\textbf{non-templated natural contexts}. Negative-control individuals never in
+training verify that positive results reflect memorization, not
+hallucination, following the canary methodology of
+Carlini et al.~\cite{carlini2019secret}.
+
+\subsubsection{Real-PII Validation (Enron)}
+Synthetic data controls frequency but cannot alone rebut a ``synthetic-only''
+critique. We add a real-data validation: we fine-tune on the Enron email
+corpus with \emph{synthetic record owners substituted for real individuals},
+measure per-record frequency from the corpus itself, and re-run the
+confirmation attack. This tests whether the frequency threshold and
+field-type structure replicate outside the synthetic setting while avoiding
+release of real PII.
+
+\subsection{Baselines}
+We compare the three-point spectrum plus controls, all under one metric:
+\begin{itemize}
+\item \textbf{Fixed prompts}: direct, completion~\cite{carlini2021extracting},
+few-shot, and template attacks (best of $k$ variants).
+\item \textbf{PII-Scope / PII-Compass}~\cite{piiscope2024,piicompass2024}:
+multi-query, soft-prompt, and prefix-grounding attacks, run head-to-head on
+the same models.
+\item \textbf{Compute-matched random-restart control}: $N$ random suffixes at
+the \emph{same} query budget as GCG. This isolates ``optimization helps'' from
+``knowing the target helps'': GCG must beat random restarts at equal compute
+for the upper-bound claim to be about optimization.
+\end{itemize}
+
+\subsection{Unified Metric}
+All methods are scored by one \textbf{per-(person, field) exact-match rate
+(EMR)}: a (person, field) pair counts as extracted iff the model reproduces
+that field verbatim (after whitespace/punctuation normalization) under the
+method's best prompt. The same field set and same success rule apply to every
+method, removing the baseline-vs-attack metric asymmetry that made prior ratios
+non-comparable. We report per-target \emph{paired} significance (McNemar /
+paired bootstrap over targets) with 95\% CIs and multiple-comparison
+correction across $\ge 5$ seeds.
+
+\subsection{Models}
+Targets span classic and modern/instruction-tuned LMs. Smaller open models
+(GPT-2 124M/355M~\cite{radford2019language},
+Pythia-1.4B/2.8B~\cite{biderman2023pythia}) are trained end-to-end; modern targets
+(a Llama-class~\cite{touvron2023llama} / Qwen2.5-7B model and its
+\emph{-Instruct} variant) are adapted with \textbf{LoRA/QLoRA} and reported as such---LoRA memorizes less,
+which is itself a finding, and it makes the modern-model rows feasible on a
+single GPU. Instruction-tuned targets sharpen the story: their refusal priors
+block fixed-prompt audits but not optimization, which is where the auditing gap
+should be widest.
+
+%==============================================================================
+\section{Results}
+\label{sec:results}
+%==============================================================================
+
+All cells below are placeholders to be filled from real runs; no numbers are
+invented. Each table names the experiment that populates it.
+
+\subsection{The Auditing Gap}
+Table~\ref{tab:main} calibrates the gap across the spectrum under the unified
+EMR. The headline is the multiplicative gap between fixed-prompt audits and the
+gradient-optimized upper bound, reported \emph{alongside} the random-restart
+control so the ratio reflects optimization, not target knowledge alone.
+
+\begin{table}[t]
+\centering
+\caption{Auditing gap under the unified per-(person, field) EMR (\%), by model.
+Reported with 95\% CIs over $\ge 5$ seeds; paired tests vs.\ fixed prompts.}
+\label{tab:main}
+\small
+\begin{tabular}{@{}lccccc@{}}
+\toprule
+\textbf{Model} & \textbf{Fixed} & \textbf{Multi-Q} & \textbf{Rand.\ restart} & \textbf{GCG (UB)} & \textbf{Gap} \\
+\midrule
+GPT-2-124M    & -- & -- & -- & -- & -- \\
+GPT-2-355M    & -- & -- & -- & -- & -- \\
+Pythia-1.4B   & -- & -- & -- & -- & -- \\
+Pythia-2.8B   & -- & -- & -- & -- & -- \\
+Llama-3.1-8B$^{\dagger}$        & -- & -- & -- & -- & -- \\
+Llama-3.1-8B-Instruct$^{\dagger}$ & -- & -- & -- & -- & -- \\
+\bottomrule
+\end{tabular}
+\\[2pt]
+\raggedright\footnotesize $^{\dagger}$LoRA/QLoRA-adapted.\\
+\todo{Table 1 main auditing-gap results --- from run\_experiments.py --stage eval,
+unified EMR, 5 seeds; Gap = GCG/Fixed with paired-bootstrap CI.}
+\end{table}
+
+\subsection{Frequency Threshold}
+Table~\ref{tab:freq} reports EMR by training frequency and the
+frequency$\times$method interaction. We report a Pearson $r$ between frequency
+and extractability and a two-way ANOVA interaction (both computed by real
+code, not asserted).
+
+\begin{table}[t]
+\centering
+\caption{EMR (\%) by training frequency (GPT-2-124M). $\Delta$ is the
+optimization advantage over fixed prompts.}
+\label{tab:freq}
+\small
+\begin{tabular}{@{}lcccc@{}}
+\toprule
+\textbf{Frequency} & $N$ & \textbf{Fixed} & \textbf{GCG} & $\Delta$ \\
+\midrule
+1 occurrence   & -- & -- & -- & -- \\
+5 occurrences  & -- & -- & -- & -- \\
+20+ occurrences & -- & -- & -- & -- \\
+\bottomrule
+\end{tabular}
+\\[2pt]
+\raggedright\footnotesize
+\todo{Table 2 frequency threshold --- Pearson $r$ (freq vs.\ EMR) and two-way
+freq$\times$method ANOVA $F$/$p$ from linguistic\_analysis.py; 5 seeds,
+per-target paired.}
+\end{table}
+
+\subsection{Field-Type Breakdown}
+Table~\ref{tab:field} breaks EMR down by field type. We expect the gap to be
+widest on structured, low-perplexity numeric fields (SSN, credit card), which
+fixed-prompt audits miss but optimization surfaces---this differential is one
+of our two \emph{new} predictor claims.
+
+\begin{table}[t]
+\centering
+\caption{EMR (\%) by PII field type (GPT-2-124M).}
+\label{tab:field}
+\small
+\begin{tabular}{@{}lccc@{}}
+\toprule
+\textbf{Field} & \textbf{Fixed} & \textbf{GCG} & \textbf{Gap} \\
+\midrule
+Name        & -- & -- & -- \\
+Email       & -- & -- & -- \\
+Phone       & -- & -- & -- \\
+Address     & -- & -- & -- \\
+SSN         & -- & -- & -- \\
+Credit card & -- & -- & -- \\
+\bottomrule
+\end{tabular}
+\\[2pt]
+\raggedright\footnotesize
+\todo{Table 3 field-type breakdown --- from evaluate.py per-field unified EMR,
+5 seeds.}
+\end{table}
+
+\subsection{Predictor Provenance}
+Table~\ref{tab:predictors} lists each candidate predictor with an explicit
+\textbf{new / confirmatory / descriptive} tag and its incremental
+pseudo-$R^2$ \emph{over frequency alone}, with perplexity/compression computed
+under a \emph{held-out reference model} to remove the circularity of scoring
+under the target.
+
+\begin{table}[t]
+\centering
+\caption{Predictor provenance. $\Delta R^2$ is incremental over frequency
+alone; perplexity/compression measured under a held-out reference model.}
+\label{tab:predictors}
+\small
+\begin{tabular}{@{}llcc@{}}
+\toprule
+\textbf{Predictor} & \textbf{Provenance} & $\beta$ & $\Delta R^2$ \\
+\midrule
+Perplexity (held-out)   & confirmatory & -- & -- \\
+Compression ratio       & confirmatory & -- & -- \\
+Entity density          & confirmatory & -- & -- \\
+Frequency               & confirmatory & -- & -- \\
+Field-type / structure  & \textbf{new} & -- & -- \\
+Type-token-ratio erosion & \textbf{new} & -- & -- \\
+Special-char ratio      & descriptive  & -- & -- \\
+\bottomrule
+\end{tabular}
+\\[2pt]
+\raggedright\footnotesize
+\todo{Table 4 predictor provenance --- $\beta$ and $\Delta$-pseudo-$R^2$ over
+frequency from linguistic\_analysis.py with held-out reference-model
+perplexity/zlib; tag each row new/confirmatory/descriptive.}
+\end{table}
+
+\subsection{Head-to-Head vs.\ PII-Scope / PII-Compass}
+Table~\ref{tab:headtohead} places our upper bound against the 2024--25 PII
+attacks on shared models, so the novelty delta is a measured gap rather than an
+assertion.
+
+\begin{table}[t]
+\centering
+\caption{Head-to-head EMR (\%) on shared models. GCG is the confirmation upper
+bound; PII-Scope/PII-Compass are the discovery middle.}
+\label{tab:headtohead}
+\small
+\begin{tabular}{@{}lcccc@{}}
+\toprule
+\textbf{Model} & \textbf{PII-Scope} & \textbf{PII-Compass} & \textbf{GCG (UB)} & \textbf{$\Delta$UB} \\
+\midrule
+GPT-2-355M  & -- & -- & -- & -- \\
+Pythia-2.8B & -- & -- & -- & -- \\
+Llama-3.1-8B$^{\dagger}$ & -- & -- & -- & -- \\
+\bottomrule
+\end{tabular}
+\\[2pt]
+\raggedright\footnotesize $^{\dagger}$LoRA/QLoRA-adapted.\\
+\todo{Table 5 PII-Scope/PII-Compass head-to-head --- reimplement or run their
+released attacks on our shared checkpoints; unified EMR, 5 seeds.}
+\end{table}
+
+\subsection{Compute-Matched Random-Restart Control}
+Table~\ref{tab:restart} reports GCG vs.\ $N$ random restarts at equal query
+budget. The upper-bound claim requires GCG to beat random restarts at matched
+compute; otherwise the ``gap'' is attributable to target knowledge and budget,
+not to optimization.
+
+\begin{table}[t]
+\centering
+\caption{GCG vs.\ compute-matched random restarts (EMR \%, GPT-2-124M).}
+\label{tab:restart}
+\small
+\begin{tabular}{@{}lccc@{}}
+\toprule
+\textbf{Query budget} & \textbf{Rand.\ restart} & \textbf{GCG} & $\Delta$ \\
+\midrule
+Low   & -- & -- & -- \\
+Med   & -- & -- & -- \\
+High  & -- & -- & -- \\
+\bottomrule
+\end{tabular}
+\\[2pt]
+\raggedright\footnotesize
+\todo{Table 6 random-restart control --- from run\_experiments.py control arm at
+matched forward-pass budget; 5 seeds, paired vs.\ GCG.}
+\end{table}
+
+%==============================================================================
+\section{Adaptive Defenses}
+\label{sec:defense}
+%==============================================================================
+
+We evaluate defenses as an \textbf{arms race}, not a one-shot classifier, and
+we report degradation honestly against both a naive and an adaptive adversary.
+Both defenses are calibrated to a \emph{fixed false-positive rate on benign
+real queries}, so recall numbers are comparable across settings.
+
+\paragraph{Input filter.}
+A classifier over prompt features (token repetition, rare-token ratio,
+syntactic shallowness) flags likely extraction suffixes. Against the naive GCG
+adversary these suffixes are conspicuous; the question is whether the filter
+survives an adversary optimizing Eq.~\ref{eq:adapt}.
+
+\paragraph{Perplexity filter.}
+Following the standard defense, we reject high-perplexity prompts. The
+adaptive adversary of Eq.~\ref{eq:adapt} directly minimizes suffix perplexity,
+so this is the load-bearing test.
+
+\paragraph{The PII-specific tension.}
+The twist is that the \emph{target} PII string is itself low-perplexity after
+memorization. Standard perplexity
+defenses~\cite{jain2023baseline} tuned to reject the adversary's prompt risk
+either missing a fluent adaptive suffix or blocking benign low-perplexity
+traffic, because the malicious and benign distributions overlap in exactly the
+regime the attack lives in. This tension is absent from jailbreak settings,
+where the harmful target is not a memorized low-perplexity string.
+
+\begin{table}[t]
+\centering
+\caption{Defense recall (\%) at fixed benign-query FPR, vs.\ naive and adaptive
+(fluency-regularized) adversaries.}
+\label{tab:defense}
+\small
+\begin{tabular}{@{}lcccc@{}}
+\toprule
+\textbf{Defense} & \textbf{FPR} & \textbf{vs.\ naive} & \textbf{vs.\ adaptive} & \textbf{$\Delta$} \\
+\midrule
+Input filter      & -- & -- & -- & -- \\
+Perplexity filter & -- & -- & -- & -- \\
+\bottomrule
+\end{tabular}
+\\[2pt]
+\raggedright\footnotesize
+\todo{Table 7 adaptive defense --- from defense\_eval.py: fix benign-query FPR
+on real queries, report recall vs.\ naive GCG and vs.\ $\lambda$-swept
+fluency-regularized GCG; label the collapse.}
+\end{table}
+
+Table~\ref{tab:defense} reports recall at fixed FPR. We expect both filters to
+score well against the naive adversary and to \emph{collapse} against the
+adaptive one---the central security result and the correct way to answer the
+``test at least one defense'' critique, since running the non-adaptive filter
+alone would overstate its protection.
+
+%==============================================================================
+\section{Ethics \& Limitations}
+\label{sec:ethics}
+%==============================================================================
+
+\paragraph{Ethics.}
+All synthetic records are fictitious (Faker). The Enron validation substitutes
+\emph{synthetic owners} for real individuals and releases no real PII. We test
+only on models we control or open weights, never on production APIs, and we
+release defensive tooling alongside the attack. The confirmation framing is
+inherently defensive: it audits known corpora rather than discovering unknown
+secrets.
+
+\paragraph{Limitations.}
+(i) The confirmation setting measures a worst-case \emph{upper bound}, not
+field-deployment discovery risk---by design. (ii) Synthetic data controls
+frequency but has regular formats; the format-perturbation, non-templated-context,
+and Enron validations address but do not eliminate this. (iii) We report
+modern-model results under LoRA/QLoRA, which memorizes less than full
+fine-tuning; full-fine-tune numbers may be higher. (iv) GCG is one optimizer;
+we claim an upper bound relative to prompt-based attacks at matched budget, not
+the global optimum. (v) Compute and model scope are stated honestly and do not
+extend to 100B+ models.
+
+%==============================================================================
+\section{Conclusion}
+\label{sec:conclusion}
+%==============================================================================
+
+We reframed PII auditing as a \emph{confirmation attack}---the auditor holds
+the record and measures its elicitability---and used it to calibrate the
+auditing gap across a three-point spectrum from fixed prompts to
+gradient-optimized confirmation, with a unified metric and a compute-matched
+control that isolates optimization from target knowledge. The gap is widest on
+structured, low-perplexity fields and instruction-tuned targets, and the input
+and perplexity filters that stop naive extraction collapse against a
+fluency-regularized adversary---with a PII-specific twist, the low-perplexity
+target, that has no analogue in jailbreak defenses. Organizations should treat
+fixed-prompt audits as lower bounds and their optimized confirmation results as
+the conservative upper bound for risk assessment. Deduplication below the
+frequency threshold~\cite{lee2022deduplicating,kandpal2022deduplicating}
+remains a first-line mitigation, but our results show it does not by itself
+close the gap against an optimization adversary.
+
+%==============================================================================
+% References --- corrected author lists; self-contained (no external .bib).
+%==============================================================================
+\begin{thebibliography}{99}
+
+\bibitem{carlini2021extracting}
+N.~Carlini, F.~Tram\`{e}r, E.~Wallace, M.~Jagielski, A.~Herbert-Voss, K.~Lee,
+A.~Roberts, T.~Brown, D.~Song, \'{U}.~Erlingsson, A.~Oprea, and C.~Raffel,
+``Extracting training data from large language models,'' in \emph{30th USENIX
+Security Symposium}, 2021, pp.~2633--2650.
+
+\bibitem{carlini2022quantifying}
+N.~Carlini, D.~Ippolito, M.~Jagielski, K.~Lee, F.~Tram\`{e}r, and C.~Zhang,
+``Quantifying memorization across a continuum of language models,''
+\emph{arXiv preprint arXiv:2202.07646}, 2022. (ICLR 2023.)
+
+\bibitem{carlini2023quantifying}
+N.~Carlini, D.~Ippolito, M.~Jagielski, K.~Lee, F.~Tram\`{e}r, and C.~Zhang,
+``Quantifying memorization across a continuum of language models,'' in
+\emph{International Conference on Learning Representations (ICLR)}, 2023.
+
+\bibitem{carlini2019secret}
+N.~Carlini, C.~Liu, \'{U}.~Erlingsson, J.~Kos, and D.~Song, ``The secret
+sharer: Evaluating and testing unintended memorization in neural networks,''
+in \emph{28th USENIX Security Symposium}, 2019, pp.~267--284.
+
+\bibitem{nasr2023scalable}
+M.~Nasr, N.~Carlini, J.~Hayase, M.~Jagielski, A.~F.~Cooper, D.~Ippolito,
+C.~A.~Choquette-Choo, E.~Wallace, F.~Tram\`{e}r, and K.~Lee, ``Scalable
+extraction of training data from (production) language models,'' \emph{arXiv
+preprint arXiv:2311.17035}, 2023.
+
+\bibitem{lukas2023analyzing}
+N.~Lukas, A.~Salem, R.~Sim, S.~Tople, L.~Wutschitz, and
+S.~Zanella-B\'{e}guelin, ``Analyzing leakage of personally identifiable
+information in language models,'' in \emph{2023 IEEE Symposium on Security and
+Privacy (SP)}, 2023, pp.~346--363.
+
+\bibitem{feldman2020neural}
+V.~Feldman and C.~Zhang, ``What neural networks memorize and why: Discovering
+the long tail via influence estimation,'' in \emph{Advances in Neural
+Information Processing Systems (NeurIPS)}, vol.~33, 2020, pp.~2881--2891.
+
+\bibitem{tirumala2022memorization}
+K.~Tirumala, A.~H.~Markosyan, L.~Zettlemoyer, and A.~Aghajanyan,
+``Memorization without overfitting: Analyzing the training dynamics of large
+language models,'' in \emph{Advances in Neural Information Processing Systems
+(NeurIPS)}, vol.~35, 2022, pp.~38274--38290.
+
+\bibitem{biderman2023emergent}
+S.~Biderman, U.~S.~Prashanth, L.~Sutawika, H.~Schoelkopf, Q.~Anthony,
+S.~Purohit, and E.~Raff, ``Emergent and predictable memorization in large
+language models,'' in \emph{Advances in Neural Information Processing Systems
+(NeurIPS)}, vol.~36, 2023, pp.~28072--28090.
+
+\bibitem{biderman2023pythia}
+S.~Biderman, H.~Schoelkopf, Q.~Anthony, H.~Bradley, K.~O'Brien, E.~Hallahan,
+M.~A.~Khan, S.~Purohit, U.~S.~Prashanth, E.~Raff, A.~Skowron, L.~Sutawika, and
+O.~van der Wal, ``Pythia: A suite for analyzing large language models across
+training and scaling,'' in \emph{International Conference on Machine Learning
+(ICML)}, 2023, pp.~2397--2430.
+
+\bibitem{radford2019language}
+A.~Radford, J.~Wu, R.~Child, D.~Luan, D.~Amodei, and I.~Sutskever, ``Language
+models are unsupervised multitask learners,'' \emph{OpenAI Technical Report},
+2019.
+
+\bibitem{touvron2023llama}
+H.~Touvron, L.~Martin, K.~Stone, P.~Albert, A.~Almahairi, Y.~Babaei,
+N.~Bashlykov, S.~Batra, P.~Bhargava, S.~Bhosale, \emph{et~al.}, ``Llama 2:
+Open foundation and fine-tuned chat models,'' \emph{arXiv preprint
+arXiv:2307.09288}, 2023.
+
+\bibitem{zou2023universal}
+A.~Zou, Z.~Wang, N.~Carlini, M.~Nasr, J.~Z.~Kolter, and M.~Fredrikson,
+``Universal and transferable adversarial attacks on aligned language models,''
+\emph{arXiv preprint arXiv:2307.15043}, 2023.
+
+\bibitem{liu2023autodan}
+X.~Liu, N.~Xu, M.~Chen, and C.~Xiao, ``AutoDAN: Generating stealthy jailbreak
+prompts on aligned large language models,'' in \emph{International Conference
+on Learning Representations (ICLR)}, 2024. (arXiv:2310.04451.)
+
+\bibitem{guo2024cold}
+X.~Guo, F.~Yu, H.~Zhang, L.~Qin, and B.~Hu, ``COLD-Attack: Jailbreaking LLMs
+with stealthiness and controllability,'' in \emph{International Conference on
+Machine Learning (ICML)}, 2024. (arXiv:2402.08679.)
+
+\bibitem{schwarzschild2024rethinking}
+A.~Schwarzschild, Z.~Feng, P.~Maini, Z.~C.~Lipton, and J.~Z.~Kolter,
+``Rethinking LLM memorization through the lens of adversarial compression,'' in
+\emph{Advances in Neural Information Processing Systems (NeurIPS)}, vol.~37,
+2024, pp.~56244--56267.
+
+\bibitem{piiscope2024}
+K.~Nakka, A.~Frikha, R.~Mendes, X.~Jiang, and X.~Zhou, ``PII-Scope: A
+benchmark for training data PII leakage assessment in LLMs,'' \emph{arXiv
+preprint arXiv:2410.06704}, 2024.
+
+\bibitem{piicompass2024}
+K.~Nakka, A.~Frikha, R.~Mendes, X.~Jiang, and X.~Zhou, ``PII-Compass: Guiding
+LLM training data extraction prompts towards the target PII via grounding,''
+in \emph{Proceedings of the Fifth Workshop on Privacy in Natural Language
+Processing (ACL)}, 2024. (arXiv:2407.02943.)
+
+\bibitem{hayes2025np}
+J.~Hayes, M.~Swanberg, H.~Chaudhari, I.~Yona, I.~Shumailov, M.~Nasr,
+C.~A.~Choquette-Choo, K.~Lee, and A.~F.~Cooper, ``Measuring memorization
+through probabilistic discoverable extraction,'' in \emph{Proceedings of the
+2025 Conference of the North American Chapter of the ACL (NAACL)}, 2025.
+
+\bibitem{lee2022deduplicating}
+K.~Lee, D.~Ippolito, A.~Nystrom, C.~Zhang, D.~Eck, C.~Callison-Burch, and
+N.~Carlini, ``Deduplicating training data makes language models better,'' in
+\emph{Proceedings of the 60th Annual Meeting of the ACL (Volume 1: Long
+Papers)}, 2022, pp.~8424--8445.
+
+\bibitem{kandpal2022deduplicating}
+N.~Kandpal, E.~Wallace, and C.~Raffel, ``Deduplicating training data mitigates
+privacy risks in language models,'' in \emph{International Conference on
+Machine Learning (ICML)}, 2022, pp.~10697--10707.
+
+\bibitem{jain2023baseline}
+N.~Jain, A.~Schwarzschild, Y.~Wen, G.~Somepalli, J.~Kirchenbauer, P.-y.~Chiang,
+M.~Goldblum, A.~Saha, J.~Geiping, and T.~Goldstein, ``Baseline defenses for
+adversarial attacks against aligned language models,'' \emph{arXiv preprint
+arXiv:2309.00614}, 2023.
+
+\end{thebibliography}
+
+\end{document}

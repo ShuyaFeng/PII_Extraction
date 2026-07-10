@@ -1,0 +1,28 @@
+# Generated experiment artifacts (regenerate with run_experiments.py)
+data/
+models/
+results/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+.ipynb_checkpoints/
+
+# Caches / cluster logs
+.hf_cache/
+slurm/logs/*
+!slurm/logs/.gitkeep
+
+# LaTeX build
+*.aux
+*.log
+*.out
+*.bbl
+*.blg
+*.synctex.gz
+
+# OS
+.DS_Store
