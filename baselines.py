@@ -18,6 +18,7 @@ import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 from config import baseline_cfg, gcg_cfg, data_cfg, DEVICE, DATA_DIR, RESULTS_DIR
+from evaluate import cap_targets
 
 
 # ---------------------------------------------------------------------------
@@ -274,6 +275,7 @@ def run_baselines_all_models(
     registry_path = os.path.join(DATA_DIR, "target_registry.json")
     with open(registry_path) as f:
         targets = json.load(f)
+    targets = cap_targets(targets)
 
     all_results = {}
 
@@ -490,6 +492,7 @@ def run_random_restart_all_models(
     registry_path = os.path.join(DATA_DIR, "target_registry.json")
     with open(registry_path) as f:
         targets = json.load(f)
+    targets = cap_targets(targets)
 
     all_results = {}
 

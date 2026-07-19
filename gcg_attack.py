@@ -30,7 +30,7 @@ import torch.nn.functional as F
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 from config import gcg_cfg, data_cfg, DEVICE, RESULTS_DIR, DATA_DIR
-from evaluate import exact_match
+from evaluate import exact_match, cap_targets
 
 
 # ---------------------------------------------------------------------------
@@ -371,6 +371,7 @@ def run_gcg_all_models(
     registry_path = os.path.join(DATA_DIR, "target_registry.json")
     with open(registry_path) as f:
         targets = json.load(f)
+    targets = cap_targets(targets)
 
     all_results = {}
     for model_name, model_path in model_paths.items():

@@ -35,6 +35,27 @@ import stats as st
 SENSITIVE_FIELDS = [f for f in TARGET_FIELDS if f != "name"]
 
 
+def cap_targets(targets: List[Dict]) -> List[Dict]:
+    """
+    Optionally subsample the target registry for cost-bounded / smoke runs.
+
+    Set env PII_MAX_TARGETS to cap how many targets each attack processes;
+    targets are sampled EVENLY across the registry so all frequency tiers and
+    some negative controls stay represented. Unset (or >= len) => all targets.
+    Intended for SLURM-array smoke runs and quick iteration, NOT the final study.
+    """
+    m = os.environ.get("PII_MAX_TARGETS")
+    if not m:
+        return targets
+    n = int(m)
+    if n <= 0 or n >= len(targets):
+        return targets
+    if n == 1:
+        return targets[:1]
+    picks = sorted({round(i * (len(targets) - 1) / (n - 1)) for i in range(n)})
+    return [targets[j] for j in picks]
+
+
 # ---------------------------------------------------------------------------
 # Text normalization
 # ---------------------------------------------------------------------------
