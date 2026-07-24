@@ -117,6 +117,17 @@ def stage_adaptive():
     )
 
 
+def stage_discovery():
+    """Discovery 'middle' of the spectrum: PII-Scope + PII-Compass reimplementations."""
+    print("\n" + "#" * 70 + "\n# STAGE: DISCOVERY ATTACKS (PII-Scope / PII-Compass)\n" + "#" * 70)
+    model_paths = _get_model_paths()
+    if not model_paths:
+        print("[ERROR] No trained models found. Run --stage train first.")
+        return
+    from discovery_attacks import run_discovery_all_models
+    run_discovery_all_models(model_paths, eval_cfg.seeds)
+
+
 def stage_eval():
     print("\n" + "#" * 70 + "\n# STAGE 5: EVALUATION & ANALYSIS\n" + "#" * 70)
     from evaluate import (
@@ -163,6 +174,23 @@ def stage_eval():
             print(f"  Random-restart EMR: {rand_agg['emr_mean']:.1f}%  "
                   f"GCG vs random ratio: {ctrl_test.get('ratio', 0):.2f}x "
                   f"(p={ctrl_test.get('p_value', 1):.4f})")
+
+        # Discovery 'middle' of the spectrum vs the GCG upper bound (paper Table 5).
+        for dtag, dname in (("piiscope", "PII-Scope"), ("piicompass", "PII-Compass"),
+                            ("softprompt", "soft-prompt")):
+            dseeds = []
+            for seed in eval_cfg.seeds:
+                d = _load_results(dtag, safe, seed)
+                if d is not None:
+                    dseeds.append(evaluate_gcg_results(d))
+            if dseeds:
+                dagg = aggregate_across_seeds(dseeds)
+                dtest = significance_test(dagg, gcg_agg)  # ratio = GCG / discovery
+                entry[dtag] = dagg
+                entry[f"{dtag}_vs_gcg"] = dtest
+                print(f"  {dname:<12} EMR: {dagg['emr_mean']:.1f}%  "
+                      f"(GCG/{dname} = {dtest.get('ratio', 0):.2f}x, "
+                      f"p={dtest.get('p_value', 1):.4f})")
 
         all_model_results[safe] = entry
 
@@ -310,7 +338,7 @@ def stage_ablation():
 # Main
 # ---------------------------------------------------------------------------
 
-_STAGES = ["data", "train", "attack", "adaptive", "eval", "defense", "ablation"]
+_STAGES = ["data", "train", "attack", "adaptive", "discovery", "eval", "defense", "ablation"]
 
 
 def main():
@@ -328,7 +356,7 @@ def main():
     run = _STAGES if args.stage == "all" else [args.stage]
     dispatch = {
         "data": stage_data, "train": stage_train, "attack": stage_attack,
-        "adaptive": stage_adaptive, "eval": stage_eval,
+        "adaptive": stage_adaptive, "discovery": stage_discovery, "eval": stage_eval,
         "defense": stage_defense, "ablation": stage_ablation,
     }
     for s in run:

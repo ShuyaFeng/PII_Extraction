@@ -331,6 +331,24 @@ class LinguisticConfig:
 # Defense evaluation
 # ---------------------------------------------------------------------------
 @dataclass
+class DiscoveryConfig:
+    """
+    The 'realistic middle' of the auditing spectrum: reimplementations of the
+    2024-25 PII-attack line we benchmark GCG against (paper Table 5).
+      - PII-Compass (arXiv:2407.02943): grounding-prefix extraction.
+      - PII-Scope (arXiv:2410.06704): multi-query aggregation + white-box
+        soft-prompt (continuous prefix) optimization.
+    These are faithful reimplementations, not the authors' released code.
+    """
+    # Multi-query: number of distinct queries issued per (person, field); union.
+    multiquery_budget: int = 40
+    # Soft-prompt (white-box continuous optimization).
+    soft_prompt_tokens: int = 20
+    soft_prompt_steps: int = 100
+    soft_prompt_lr: float = 0.1
+
+
+@dataclass
 class DefenseConfig:
     # Evaluate every input filter against BOTH the naive GCG suffix and the
     # fluency-regularized (adaptive) suffix, so we report honest degradation.
@@ -354,6 +372,7 @@ baseline_cfg = BaselineConfig()
 eval_cfg = EvalConfig()
 ling_cfg = LinguisticConfig()
 defense_cfg = DefenseConfig()
+discovery_cfg = DiscoveryConfig()
 
 
 # ---------------------------------------------------------------------------
@@ -399,3 +418,11 @@ if _npub is not None:
 _lam = _env_float("PII_ADAPTIVE_LAMBDA")
 if _lam is not None:
     gcg_cfg.adaptive_fluency_lambda = _lam
+
+_soft = _env_int("PII_SOFT_STEPS")
+if _soft:
+    discovery_cfg.soft_prompt_steps = _soft
+
+_mqb = _env_int("PII_MULTIQUERY_BUDGET")
+if _mqb:
+    discovery_cfg.multiquery_budget = _mqb

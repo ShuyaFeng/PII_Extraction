@@ -67,6 +67,7 @@ echo "Start: $(date)"
 python run_experiments.py --stage train
 python run_experiments.py --stage attack
 python run_experiments.py --stage adaptive
+python run_experiments.py --stage discovery
 python run_experiments.py --stage eval
 python run_experiments.py --stage defense
 python run_experiments.py --stage ablation

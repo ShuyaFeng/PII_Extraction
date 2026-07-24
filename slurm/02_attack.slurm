@@ -44,4 +44,5 @@ nvidia-smi || true
 
 python run_experiments.py --stage attack     # baselines + naive GCG + random-restart
 python run_experiments.py --stage adaptive    # fluency-regularized GCG
+python run_experiments.py --stage discovery   # PII-Scope + PII-Compass reimplementations
 echo "[attack] DONE: model=${model} seed=${seed}"
