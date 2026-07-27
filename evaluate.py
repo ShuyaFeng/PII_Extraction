@@ -56,6 +56,33 @@ def cap_targets(targets: List[Dict]) -> List[Dict]:
     return [targets[j] for j in picks]
 
 
+def merge_records(sources: List[List[Dict]]) -> List[Dict]:
+    """
+    Merge per-field SHARD result lists (and/or a canonical list) into one list,
+    keyed by person: field_results (and baseline 'methods') are unioned across
+    sources. Used by the field-parallel workflow, where GCG is written one shard
+    per field. A single source is returned unchanged.
+    """
+    sources = [s for s in sources if s]
+    if not sources:
+        return []
+    if len(sources) == 1:
+        return sources[0]
+    merged, order = {}, []
+    for data in sources:
+        for rec in data:
+            key = rec.get("person_name")
+            if key not in merged:
+                merged[key] = {k: v for k, v in rec.items()
+                               if k not in ("field_results", "methods")}
+                order.append(key)
+            if "field_results" in rec:
+                merged[key].setdefault("field_results", {}).update(rec["field_results"])
+            if "methods" in rec:
+                merged[key].setdefault("methods", {}).update(rec["methods"])
+    return [merged[k] for k in order]
+
+
 # ---------------------------------------------------------------------------
 # Text normalization
 # ---------------------------------------------------------------------------

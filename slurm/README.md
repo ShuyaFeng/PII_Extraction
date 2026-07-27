@@ -42,6 +42,27 @@ sbatch --partition=gpu --gres=gpu:1 --time=12:00:00 slurm/03_finalize.slurm
 one each in `sweep_config.sh`, then
 `PII_GCG_ITERS=100 PII_MAX_TARGETS=8 bash slurm/submit_all.sh`.
 
+## 1a-bis. Field-parallel sweep (when a coarse GCG task would time out)
+
+GCG is the cost driver. If one `(model, seed)` GCG task can't finish inside the
+queue limit, shard GCG **by field** — same results, ~1/NFIELDS the per-task time:
+
+```bash
+PARTITION=gpu GRES=gpu:a100:1 ACCOUNT=myproj bash slurm/submit_all_by_field.sh
+```
+
+```
+01_train (model)
+   ├─afterok─▶ 02a_attack_shared (model×seed)      baselines + random + discovery (all fields)
+   └─afterok─▶ 02b_gcg_by_field   (model×seed×field) GCG naive+adaptive, one field per task -> shard files
+                    both ─afterok─▶ 03_finalize      merges shards (_load_results), then aggregates
+```
+
+Shards are `results/{gcg,gcg_adaptive}_<model>_seed<seed>.field-<field>.json`;
+`run_experiments._load_results` merges them transparently, so `eval` is identical
+to a coarse run (verified). Edit `FIELDS` in `sweep_config.sh` if you change the
+sensitive-field set.
+
 ## 1b. Single job (small runs / debugging)
 
 ```bash
@@ -59,6 +80,12 @@ sbatch --export=ALL,PII_MODELS=gpt2,PII_SEEDS=42,PII_GCG_ITERS=100 slurm/run_exp
 | `PII_MAX_TARGETS` | cap targets/task, evenly sampled (smoke/cost-bound; unset = full study) |
 | `PII_ADAPTIVE_LAMBDA` | fluency-λ for the adaptive attack |
 | `PII_N_PUBLIC` | public passages in the corpus (data stage) |
+| `PII_FIELDS` | comma list of fields for GCG (field-parallel array sets this per task) |
+| `PII_SOFT_STEPS` | PII-Scope soft-prompt optimization steps |
+| `PII_MULTIQUERY_BUDGET` | PII-Scope multi-query queries per (person, field) |
+
+The attack tasks also run **`discovery`** (PII-Scope / PII-Compass reimplementations)
+for the head-to-head in paper Table 5.
 
 ## Why train and attack are split
 

@@ -18,6 +18,10 @@ MODELS=(
 # --- Seeds (one attack task per model x seed) --------------------------------
 SEEDS=(42 123 456 789 1011)
 
+# --- Sensitive fields (only used by the FIELD-PARALLEL workflow, submit_all_by_field.sh).
+#     Must match evaluate.SENSITIVE_FIELDS. GCG is sharded one task per field. ---
+FIELDS=(ssn email phone address credit_card)
+
 # --- Scale / hardware (consumed by config.py's env-var overrides) ------------
 export PII_DEVICE_PROFILE="${PII_DEVICE_PROFILE:-a100}"
 export PII_GCG_ITERS="${PII_GCG_ITERS:-500}"
@@ -32,4 +36,6 @@ if [ -n "${PII_MAX_TARGETS:-}" ]; then export PII_MAX_TARGETS; fi
 # --- Derived counts (used to size the --array ranges) ------------------------
 NMODELS=${#MODELS[@]}
 NSEEDS=${#SEEDS[@]}
-NCOMBOS=$(( NMODELS * NSEEDS ))
+NFIELDS=${#FIELDS[@]}
+NCOMBOS=$(( NMODELS * NSEEDS ))               # coarse: model x seed
+NGCGSHARDS=$(( NMODELS * NSEEDS * NFIELDS ))  # field-parallel: model x seed x field

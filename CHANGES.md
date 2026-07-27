@@ -60,5 +60,34 @@ Use these to fill the `\todo{}` cells in `usenix_paper.tex`.
 - **`git init`** recommended (a `.gitignore` is provided) so provenance is
   auditable — required for USENIX artifact evaluation.
 - **Still TODO for submission** (from `IMPROVEMENT_PLAN.md`): run everything for
-  real; implement/obtain the PII-Scope & PII-Compass head-to-head; the Enron
-  real-PII validation; fill every `\todo`.
+  real; the Enron real-PII validation; fill every `\todo`.
+
+---
+
+# Round 2 additions
+
+## Discovery attacks — the head-to-head (paper Table 5)
+
+- **`discovery_attacks.py`** (new): faithful REIMPLEMENTATIONS of the 2024-25 PII
+  line, benchmarked against the GCG upper bound.
+  - **PII-Compass** (arXiv:2407.02943): grounding-prefix extraction.
+  - **PII-Scope** (arXiv:2410.06704): multi-query union + white-box soft-prompt
+    (continuous-prefix) optimization.
+  - All emit the gcg-style schema. New `discovery` stage; `eval` prints the
+    GCG-vs-discovery ratio (McNemar) and `generate_tables` emits Table 5.
+  - Note in the paper that these are reimplementations, not the authors' code.
+- **Unified success rule (integrity):** `evaluate.build_success_records` now
+  scores *every* optimization/discovery attack by recomputing from its
+  `generated_text` vs the field value — the same rule as the baseline — instead
+  of trusting each attack's own `success` flag. Truly apples-to-apples.
+
+## Field-parallel SLURM workflow (bypass per-task time limits)
+
+- GCG can be sharded **by field**: `PII_FIELDS` selects a subset, `gcg_only` writes
+  `results/{gcg,gcg_adaptive}_<model>_seed<seed>.field-<field>.json`, and
+  `_load_results` (via `evaluate.merge_records`) merges shards transparently —
+  scoring is identical to a coarse run (verified).
+- New granular stages `baselines_only` / `controls_only` / `gcg_only` (not part of
+  `all`); new `slurm/02a_attack_shared.slurm`, `slurm/02b_gcg_by_field.slurm`,
+  `slurm/submit_all_by_field.sh` (model → model×seed + model×seed×field → finalize).
+- New env knobs: `PII_FIELDS`, `PII_SOFT_STEPS`, `PII_MULTIQUERY_BUDGET`.

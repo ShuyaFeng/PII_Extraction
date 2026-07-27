@@ -361,13 +361,36 @@ def run_gcg_attack(
     return results
 
 
+def attack_fields(fields: Optional[List[str]] = None) -> Optional[List[str]]:
+    """
+    Resolve which PII fields to attack. Explicit `fields` wins; otherwise read the
+    PII_FIELDS env var (comma list) so a SLURM task can shard by field. None => all.
+    """
+    if fields is None:
+        env = os.environ.get("PII_FIELDS")
+        fields = [x.strip() for x in env.split(",") if x.strip()] if env else None
+    return fields
+
+
 def run_gcg_all_models(
     model_paths: Dict[str, str],
     seeds: List[int],
     fluency_lambda: float = gcg_cfg.fluency_lambda,
     tag: str = "gcg",
+    fields: Optional[List[str]] = None,
 ) -> Dict:
-    """Run GCG for all models and seeds. `tag` names the output files."""
+    """
+    Run GCG for all models and seeds. `tag` names the output files. When `fields`
+    (or PII_FIELDS) selects a STRICT SUBSET, results are written to a per-field
+    SHARD file `{tag}_{model}_seed{seed}.field-<f1-f2>.json`; run_experiments'
+    _load_results merges shards back together. Full-field runs keep the canonical
+    `{tag}_{model}_seed{seed}.json` name.
+    """
+    fields = attack_fields(fields)
+    all_fields = list(TARGET_FORMATS.keys())
+    is_shard = bool(fields) and set(fields) != set(all_fields)
+    suffix = f".field-{'-'.join(fields)}" if is_shard else ""
+
     registry_path = os.path.join(DATA_DIR, "target_registry.json")
     with open(registry_path) as f:
         targets = json.load(f)
@@ -378,10 +401,12 @@ def run_gcg_all_models(
         safe_name = model_name.replace("/", "_")
         all_results[safe_name] = {}
         for seed in seeds:
-            print(f"\n{'='*60}\nGCG Attack ({tag}): {model_name} | seed={seed}\n{'='*60}")
-            results = run_gcg_attack(model_path, targets, seed, fluency_lambda=fluency_lambda)
+            print(f"\n{'='*60}\nGCG Attack ({tag}{suffix}): {model_name} | seed={seed}\n{'='*60}")
+            results = run_gcg_attack(
+                model_path, targets, seed, fields=fields, fluency_lambda=fluency_lambda
+            )
             all_results[safe_name][seed] = results
-            out_path = os.path.join(RESULTS_DIR, f"{tag}_{safe_name}_seed{seed}.json")
+            out_path = os.path.join(RESULTS_DIR, f"{tag}_{safe_name}_seed{seed}{suffix}.json")
             with open(out_path, "w") as f:
                 json.dump(results, f, indent=2, default=str)
             print(f"  Saved to {out_path}")

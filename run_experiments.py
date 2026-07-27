@@ -17,6 +17,7 @@ Usage:
 """
 
 import argparse
+import glob
 import json
 import os
 import time
@@ -60,11 +61,22 @@ def _get_model_paths():
 
 
 def _load_results(tag, safe, seed):
-    path = os.path.join(RESULTS_DIR, f"{tag}_{safe}_seed{seed}.json")
-    if os.path.exists(path):
-        with open(path) as f:
-            return json.load(f)
-    return None
+    """
+    Load results for (tag, model, seed), transparently MERGING per-field shards
+    ({tag}_{safe}_seed{seed}.field-*.json) written by the field-parallel array,
+    plus a canonical file if present. Non-sharded tags load unchanged.
+    """
+    from evaluate import merge_records
+    base = os.path.join(RESULTS_DIR, f"{tag}_{safe}_seed{seed}.json")
+    shards = sorted(glob.glob(os.path.join(RESULTS_DIR, f"{tag}_{safe}_seed{seed}.field-*.json")))
+    paths = ([base] if os.path.exists(base) else []) + shards
+    if not paths:
+        return None
+    sources = []
+    for p in paths:
+        with open(p) as f:
+            sources.append(json.load(f))
+    return merge_records(sources)
 
 
 # ---------------------------------------------------------------------------
@@ -126,6 +138,48 @@ def stage_discovery():
         return
     from discovery_attacks import run_discovery_all_models
     run_discovery_all_models(model_paths, eval_cfg.seeds)
+
+
+# --- Granular stages for the field-parallel array (compose these instead of
+#     'attack'/'adaptive'/'discovery' when sharding GCG by field) ---------------
+
+def stage_baselines_only():
+    """Per-person baselines ONLY. Run once per (model, seed); never field-sharded."""
+    print("\n" + "#" * 70 + "\n# STAGE: BASELINES ONLY\n" + "#" * 70)
+    model_paths = _get_model_paths()
+    if not model_paths:
+        print("[ERROR] No trained models found. Run --stage train first.")
+        return
+    from baselines import run_baselines_all_models
+    run_baselines_all_models(model_paths, eval_cfg.seeds)
+
+
+def stage_controls_only():
+    """Random-restart control + discovery attacks (all fields; per model x seed)."""
+    print("\n" + "#" * 70 + "\n# STAGE: CONTROLS + DISCOVERY\n" + "#" * 70)
+    model_paths = _get_model_paths()
+    if not model_paths:
+        print("[ERROR] No trained models found. Run --stage train first.")
+        return
+    from baselines import run_random_restart_all_models
+    from discovery_attacks import run_discovery_all_models
+    if baseline_cfg.include_random_restart_control:
+        run_random_restart_all_models(model_paths, eval_cfg.seeds)
+    run_discovery_all_models(model_paths, eval_cfg.seeds)
+
+
+def stage_gcg_only():
+    """GCG naive + adaptive, honoring PII_FIELDS (sharded output for a field subset)."""
+    print("\n" + "#" * 70 + "\n# STAGE: GCG ONLY (naive + adaptive)\n" + "#" * 70)
+    model_paths = _get_model_paths()
+    if not model_paths:
+        print("[ERROR] No trained models found. Run --stage train first.")
+        return
+    from gcg_attack import run_gcg_all_models, attack_fields
+    print(f"  fields = {attack_fields() or 'ALL'}")
+    run_gcg_all_models(model_paths, eval_cfg.seeds, fluency_lambda=0.0, tag="gcg")
+    run_gcg_all_models(model_paths, eval_cfg.seeds,
+                       fluency_lambda=gcg_cfg.adaptive_fluency_lambda, tag="gcg_adaptive")
 
 
 def stage_eval():
@@ -339,11 +393,14 @@ def stage_ablation():
 # ---------------------------------------------------------------------------
 
 _STAGES = ["data", "train", "attack", "adaptive", "discovery", "eval", "defense", "ablation"]
+# Granular stages for the field-parallel array; NOT part of "all" (they replace
+# attack/adaptive/discovery when sharding GCG by field).
+_GRANULAR = ["baselines_only", "controls_only", "gcg_only"]
 
 
 def main():
     parser = argparse.ArgumentParser(description="PII Extraction Experiment Pipeline")
-    parser.add_argument("--stage", choices=_STAGES + ["all"], default="all")
+    parser.add_argument("--stage", choices=_STAGES + _GRANULAR + ["all"], default="all")
     args = parser.parse_args()
 
     print("=" * 70)
@@ -358,6 +415,8 @@ def main():
         "data": stage_data, "train": stage_train, "attack": stage_attack,
         "adaptive": stage_adaptive, "discovery": stage_discovery, "eval": stage_eval,
         "defense": stage_defense, "ablation": stage_ablation,
+        "baselines_only": stage_baselines_only, "controls_only": stage_controls_only,
+        "gcg_only": stage_gcg_only,
     }
     for s in run:
         dispatch[s]()
