@@ -429,4 +429,21 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    # Some native extensions (numpy/torch/pyarrow/aiohttp) can raise a fatal
+    # "PyGILState_Release ... finalizing" abort during interpreter SHUTDOWN —
+    # AFTER all results are written. That non-zero exit would make SLURM mark a
+    # finished stage as failed. All outputs are flushed to disk by the time main()
+    # returns, so we bypass the crashy finalization with os._exit().
+    import sys
+    try:
+        main()
+        _code = 0
+    except SystemExit as _e:
+        _code = _e.code if isinstance(_e.code, int) else (0 if _e.code is None else 1)
+    except BaseException:
+        import traceback
+        traceback.print_exc()
+        _code = 1
+    sys.stdout.flush()
+    sys.stderr.flush()
+    os._exit(_code)
