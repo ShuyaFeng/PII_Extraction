@@ -53,15 +53,17 @@ esac
 # cluster needs a specific CUDA build, install torch FIRST, e.g.:
 #   pip install "torch>=2.0" --index-url https://download.pytorch.org/whl/cu121
 # then run this script (it will keep the torch you installed).
-# --prefer-binary: pick an older version that HAS a wheel rather than compiling a
-# newer sdist from source (avoids the pandas/scipy meson+cython build failures
-# that are common on HPC login nodes).
-if ! pip install --prefer-binary -r requirements.txt; then
-  echo "[warn] full install failed (often bitsandbytes on a CUDA-less login node, or a"
-  echo "[warn] package with no wheel for this Python). Installing core deps without"
-  echo "[warn] bitsandbytes; 4-bit QLoRA stays optional."
-  pip install --prefer-binary $(grep -vE '^\s*#|bitsandbytes' requirements.txt)
-  pip install --prefer-binary bitsandbytes || echo "[warn] bitsandbytes skipped (only needed for load_in_4bit=True)."
+# --only-binary=:all: forbids source builds entirely, so pip DOWNGRADES a package
+# to a version that ships a prebuilt wheel instead of compiling the newest sdist
+# (the cause of the pandas/pyarrow/libcst meson/cython/rust build failures on HPC
+# login nodes). --prefer-binary is NOT enough: it still compiles when the newest
+# selected version has no wheel yet.
+if ! pip install --only-binary=:all: -r requirements.txt; then
+  echo "[warn] wheels-only install failed (a package may be sdist-only, or bitsandbytes"
+  echo "[warn] has no wheel here). Retrying core deps without bitsandbytes; 4-bit QLoRA"
+  echo "[warn] stays optional."
+  pip install --only-binary=:all: $(grep -vE '^\s*#|bitsandbytes' requirements.txt)
+  pip install --only-binary=:all: bitsandbytes || echo "[warn] bitsandbytes skipped (only needed for load_in_4bit=True)."
 fi
 python -m spacy download en_core_web_sm
 
