@@ -24,6 +24,7 @@ import json
 import os
 import random
 import re
+from itertools import islice
 from typing import Dict, List, Optional, Tuple
 
 from faker import Faker
@@ -451,24 +452,31 @@ def fetch_public_passages(n: int, seed: int) -> Tuple[List[Dict], Dict]:
         source_counts[name] = got
         print(f"  [{name}] fetched {got} passages")
 
+    # Primary: Wikipedia via the script-free parquet mirror (wikimedia/wikipedia),
+    # STREAMED so we never download the whole dump. Newer `datasets` dropped
+    # loading-script support, which broke the old "wikipedia" / "bookcorpusopen".
     _pull("wikipedia", lambda: (
-        r["text"] for r in load_dataset(
-            "wikipedia", "20220301.en",
-            split=f"train[:{per_source}]", trust_remote_code=True,
-        )
+        r.get("text", "") for r in islice(
+            load_dataset("wikimedia/wikipedia", "20231101.en",
+                         split="train", streaming=True),
+            n)
     ))
-    _pull("arxiv", lambda: (
-        r.get("abstract", r.get("article", "")) for r in load_dataset(
-            "ccdv/arxiv-summarization",
-            split=f"train[:{per_source}]", trust_remote_code=True,
-        )
-    ))
-    _pull("gutenberg", lambda: (
-        r["text"] for r in load_dataset(
-            "bookcorpusopen",
-            split=f"train[:{per_source}]", trust_remote_code=True,
-        )
-    ))
+    # arXiv abstracts add topical diversity (only if we still need more).
+    if len(passages) < n:
+        _pull("arxiv", lambda: (
+            (r.get("abstract") or r.get("article") or "") for r in load_dataset(
+                "ccdv/arxiv-summarization",
+                split=f"train[:{per_source}]", trust_remote_code=True,
+            )
+        ))
+    # Fallback: C4 (also script-free, streamed) if Wikipedia was unavailable.
+    if len(passages) < n:
+        need = n - len(passages)
+        _pull("c4", lambda: (
+            r.get("text", "") for r in islice(
+                load_dataset("allenai/c4", "en", split="train", streaming=True),
+                need)
+        ))
 
     n_real = len(passages)
     n_missing = max(0, n - n_real)

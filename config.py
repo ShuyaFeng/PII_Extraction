@@ -415,6 +415,14 @@ _npub = _env_int("PII_N_PUBLIC")
 if _npub is not None:
     data_cfg.n_public_passages = _npub
 
+# Safety valve: PII_ALLOW_FILLER=1 permits synthetic filler to top up the public
+# corpus when downloads fall short (e.g. a smoke run on a flaky node). It disables
+# the honesty guard, so DON'T use it for the real study — the corpus becomes
+# partly non-realistic filler (recorded in data/corpus_metadata.json).
+if os.environ.get("PII_ALLOW_FILLER", "").lower() in ("1", "true", "yes"):
+    data_cfg.allow_filler_fallback = True
+    data_cfg.max_filler_fraction = 1.0
+
 _lam = _env_float("PII_ADAPTIVE_LAMBDA")
 if _lam is not None:
     gcg_cfg.adaptive_fluency_lambda = _lam
