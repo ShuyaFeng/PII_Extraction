@@ -31,12 +31,34 @@ _PROFILES = {
     "h100":        {"gpu_mem_gb": 80, "max_batch": 48, "grad_ckpt_threshold_b": 7.0},
 }
 
-if DEVICE_PROFILE not in _PROFILES:
-    raise SystemExit(
-        f"Unknown PII_DEVICE_PROFILE={DEVICE_PROFILE!r}; choose one of {list(_PROFILES)}"
-    )
+def _auto_hw():
+    """Detect the assigned GPU's memory and pick a matching profile at runtime.
+    Ideal when SLURM assigns a random GPU (varying VRAM) per job."""
+    try:
+        import torch
+        if torch.cuda.is_available():
+            gb = torch.cuda.get_device_properties(0).total_memory / (1024 ** 3)
+            if gb >= 70:
+                return {"gpu_mem_gb": 80, "max_batch": 48, "grad_ckpt_threshold_b": 7.0}
+            if gb >= 38:
+                return {"gpu_mem_gb": 40, "max_batch": 32, "grad_ckpt_threshold_b": 3.0}
+            if gb >= 20:
+                return {"gpu_mem_gb": 24, "max_batch": 16, "grad_ckpt_threshold_b": 1.5}
+            return {"gpu_mem_gb": max(8, int(gb)), "max_batch": 8, "grad_ckpt_threshold_b": 0.5}
+    except Exception:
+        pass
+    return dict(_PROFILES["colab_free"])  # CPU / no GPU / detection failed
 
-HW = _PROFILES[DEVICE_PROFILE]
+
+if DEVICE_PROFILE == "auto":
+    HW = _auto_hw()
+elif DEVICE_PROFILE in _PROFILES:
+    HW = _PROFILES[DEVICE_PROFILE]
+else:
+    raise SystemExit(
+        f"Unknown PII_DEVICE_PROFILE={DEVICE_PROFILE!r}; "
+        f"choose one of {list(_PROFILES)} or 'auto'"
+    )
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
