@@ -36,16 +36,32 @@ fi
 source .venv/bin/activate
 python -m pip install --upgrade pip wheel setuptools
 
+# Warn early if the interpreter is too new for prebuilt scientific wheels — the
+# usual cause of a pandas/scipy SOURCE build failing on an HPC login node.
+pyver=$(python -c 'import sys; print("%d.%d" % sys.version_info[:2])')
+echo "  venv Python: $pyver"
+case "$pyver" in
+  3.8|3.9|3.10|3.11|3.12) : ;;
+  *) echo "  [warn] Python $pyver may lack prebuilt wheels for pandas/scipy; if the install"
+     echo "         below fails building from source, recreate the venv with Python 3.11:"
+     echo "           conda create -y -n pii python=3.11 && conda activate pii"
+     echo "           rm -rf .venv && PYTHON=\$(which python) bash slurm/setup_env.sh" ;;
+esac
+
 # --- 3. Dependencies -------------------------------------------------------
 # NOTE ON TORCH/CUDA: the default torch wheel targets a recent CUDA. If your
 # cluster needs a specific CUDA build, install torch FIRST, e.g.:
 #   pip install "torch>=2.0" --index-url https://download.pytorch.org/whl/cu121
 # then run this script (it will keep the torch you installed).
-if ! pip install -r requirements.txt; then
-  echo "[warn] full install failed (usually bitsandbytes on a CUDA-less login node)."
-  echo "[warn] installing core deps without bitsandbytes; 4-bit QLoRA stays optional."
-  pip install $(grep -vE '^\s*#|bitsandbytes' requirements.txt)
-  pip install bitsandbytes || echo "[warn] bitsandbytes skipped (only needed for load_in_4bit=True)."
+# --prefer-binary: pick an older version that HAS a wheel rather than compiling a
+# newer sdist from source (avoids the pandas/scipy meson+cython build failures
+# that are common on HPC login nodes).
+if ! pip install --prefer-binary -r requirements.txt; then
+  echo "[warn] full install failed (often bitsandbytes on a CUDA-less login node, or a"
+  echo "[warn] package with no wheel for this Python). Installing core deps without"
+  echo "[warn] bitsandbytes; 4-bit QLoRA stays optional."
+  pip install --prefer-binary $(grep -vE '^\s*#|bitsandbytes' requirements.txt)
+  pip install --prefer-binary bitsandbytes || echo "[warn] bitsandbytes skipped (only needed for load_in_4bit=True)."
 fi
 python -m spacy download en_core_web_sm
 
