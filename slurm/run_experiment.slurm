@@ -46,6 +46,7 @@ source .venv/bin/activate
 
 export HF_HOME="$PROJECT_ROOT/.hf_cache"
 export TOKENIZERS_PARALLELISM=false
+export PYTHONUNBUFFERED=1   # flush prints live so `tail -f` shows real-time progress
 # If compute nodes have NO internet, keep models/data cached locally (offline):
 # export HF_HUB_OFFLINE=1
 # export TRANSFORMERS_OFFLINE=1

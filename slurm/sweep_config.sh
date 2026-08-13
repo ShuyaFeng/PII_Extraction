@@ -23,9 +23,10 @@ SEEDS=(42 123 456 789 1011)
 FIELDS=(ssn email phone address credit_card)
 
 # --- Scale / hardware (consumed by config.py's env-var overrides) ------------
-export PII_DEVICE_PROFILE="${PII_DEVICE_PROFILE:-a100}"
+export PII_DEVICE_PROFILE="${PII_DEVICE_PROFILE:-auto}"
 export PII_GCG_ITERS="${PII_GCG_ITERS:-500}"
 export PII_ADAPTIVE_LAMBDA="${PII_ADAPTIVE_LAMBDA:-0.1}"
+export PYTHONUNBUFFERED=1   # flush prints live so `tail -f` shows real-time progress
 
 # Cap targets PER TASK to bound wall-clock (evenly sampled; keeps all frequency
 # tiers + some negative controls). LEAVE UNSET for the full study; set it for a
