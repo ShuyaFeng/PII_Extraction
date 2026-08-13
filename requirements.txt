@@ -15,4 +15,7 @@ statsmodels>=0.14.0
 peft>=0.7.0
 accelerate>=0.24.0
 # Optional: 4-bit (QLoRA) base weights for the largest models on tight memory.
-bitsandbytes>=0.41.0
+# NOT installed by default — old builds ship a broken cuda_setup that poisons the
+# peft/transformers import chain on some clusters. Install manually ONLY if you
+# set load_in_4bit=True and have a matching CUDA:  pip install -U bitsandbytes
+# bitsandbytes>=0.43.0
