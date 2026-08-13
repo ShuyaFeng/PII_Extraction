@@ -22,8 +22,8 @@ import json
 import os
 import time
 
-import torch
-from transformers import AutoModelForCausalLM, AutoTokenizer
+# NOTE: torch/transformers are imported LAZILY (inside _load_model/_free) so the
+# CPU-only 'data' stage runs without them.
 
 from config import (
     train_cfg, eval_cfg, data_cfg, gcg_cfg, baseline_cfg,
@@ -32,6 +32,8 @@ from config import (
 
 
 def _load_model(model_path):
+    import torch
+    from transformers import AutoModelForCausalLM, AutoTokenizer
     tokenizer = AutoTokenizer.from_pretrained(model_path)
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
@@ -45,6 +47,7 @@ def _load_model(model_path):
 
 
 def _free(model):
+    import torch
     del model
     if DEVICE == "cuda":
         torch.cuda.empty_cache()
