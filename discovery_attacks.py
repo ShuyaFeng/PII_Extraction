@@ -228,7 +228,10 @@ def _soft_prompt_one(model, tokenizer, target_text: str, field: str,
     init = W[torch.randint(0, W.shape[0], (n_soft,), device=DEVICE)]
     soft = init.detach().float().clone().unsqueeze(0).requires_grad_(True)
     opt = torch.optim.Adam([soft], lr=lr)
-    tgt_embeds = embed(tids)  # (1, T, d), model dtype
+    # Detach the target embeddings: they are a CONSTANT across optimization steps.
+    # (Leaving them attached to the frozen embedding graph caused "backward
+    # through the graph a second time" on the 2nd iteration.)
+    tgt_embeds = embed(tids).detach()  # (1, T, d), model dtype
 
     final_loss = float("nan")
     for _ in range(steps):
@@ -255,6 +258,10 @@ def _soft_prompt_one(model, tokenizer, target_text: str, field: str,
 def run_soft_prompt(model, tokenizer, targets: List[Dict]) -> List[Dict]:
     print(f"  -- PII-Scope soft-prompt (n={discovery_cfg.soft_prompt_tokens}, "
           f"steps={discovery_cfg.soft_prompt_steps}) --")
+    # Only the soft prefix is optimized — freeze the model so autograd neither
+    # builds a graph through nor accumulates gradients on the model parameters.
+    for p in model.parameters():
+        p.requires_grad_(False)
     results = []
     for ti, target in enumerate(targets):
         person = target["person"]
