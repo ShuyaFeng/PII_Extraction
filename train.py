@@ -301,8 +301,10 @@ def train_model(model_name: str) -> str:
         dataset,
         batch_size=per_device_batch,
         shuffle=True,
-        num_workers=2,
-        pin_memory=True,
+        num_workers=0,   # 0 = load in the main process. Multiprocess DataLoader
+                         # workers can deadlock on HPC (fork + tokenizer); the
+                         # on-the-fly tokenization here is cheap enough for 0.
+        pin_memory=(DEVICE == "cuda"),
         drop_last=True,
     )
 
