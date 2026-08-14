@@ -270,15 +270,24 @@ def train_model(model_name: str) -> str:
               f"targets={lora_target_modules}")
         model.print_trainable_parameters()
 
+        # Keep trainable (adapter) params in FP32 so autocast + GradScaler work
+        # even with an fp16 frozen base (otherwise: "unscale FP16 gradients").
+        for p in model.parameters():
+            if p.requires_grad:
+                p.data = p.data.float()
+
         # 4-bit weights are already placed by device_map; only move otherwise.
         if not use_4bit:
             model.to(DEVICE)
     else:
-        # Full fine-tune (small models) — unchanged from the original path.
+        # Full fine-tune (small models). Load master weights in FP32; mixed
+        # precision is applied by autocast in the loop. Loading the model itself
+        # in fp16 makes the GRADIENTS fp16 and breaks the GradScaler
+        # ("Attempting to unscale FP16 gradients").
         model = AutoModelForCausalLM.from_pretrained(
             model_name,
             trust_remote_code=True,
-            torch_dtype=torch.float16 if train_cfg.fp16 else torch.float32,
+            torch_dtype=torch.float32,
         )
 
         use_grad_ckpt = train_cfg.needs_gradient_checkpointing(model_name)
@@ -323,7 +332,13 @@ def train_model(model_name: str) -> str:
         num_training_steps=total_steps,
     )
 
-    scaler = torch.amp.GradScaler("cuda") if (train_cfg.fp16 and DEVICE == "cuda") else None
+    # Mixed precision: prefer bf16 (no GradScaler needed) on Ampere+; else fp16 +
+    # GradScaler. Master/trainable weights are fp32 (above), so the scaler is valid.
+    _use_amp = train_cfg.fp16 and DEVICE == "cuda"
+    _use_bf16 = _use_amp and torch.cuda.is_bf16_supported()
+    _amp_dtype = torch.bfloat16 if _use_bf16 else torch.float16
+    scaler = torch.amp.GradScaler("cuda") if (_use_amp and not _use_bf16) else None
+    print(f"  Mixed precision: {'bf16' if _use_bf16 else ('fp16+scaler' if _use_amp else 'off (fp32)')}")
 
     print(f"  Corpus size: {len(dataset)}")
     print(f"  Per-device batch: {per_device_batch}, Grad accum: {grad_accum}")
@@ -344,15 +359,18 @@ def train_model(model_name: str) -> str:
             attention_mask = batch["attention_mask"].to(DEVICE)
             labels = batch["labels"].to(DEVICE)
 
-            if scaler is not None:
-                with torch.amp.autocast("cuda"):
+            if _use_amp:
+                with torch.amp.autocast("cuda", dtype=_amp_dtype):
                     outputs = model(
                         input_ids=input_ids,
                         attention_mask=attention_mask,
                         labels=labels,
                     )
                     loss = outputs.loss / grad_accum
-                scaler.scale(loss).backward()
+                if scaler is not None:
+                    scaler.scale(loss).backward()
+                else:
+                    loss.backward()
             else:
                 outputs = model(
                     input_ids=input_ids,
