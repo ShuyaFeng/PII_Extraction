@@ -477,21 +477,21 @@ def _fmt_p(p: float) -> str:
 
 def generate_tables(model_results: Dict[str, Dict]) -> str:
     lines = []
-    lines.append("=" * 78)
+    lines.append("=" * 84)
     lines.append("TABLE 1: Extraction Success (micro EMR % over sensitive fields, mean +/- std)")
-    lines.append("=" * 78)
-    lines.append(f"{'Model':<20}{'Baseline':>16}{'Optimized':>16}{'Ratio [95% CI]':>18}{'p (McNemar)':>12}")
-    lines.append("-" * 78)
+    lines.append("  Adj = Optimized - Neg-ctrl = extraction attributable to MEMORIZATION (not forcing).")
+    lines.append("  A high Neg-ctrl / small Adj means the attack FORCES outputs rather than recalling")
+    lines.append("  trained data (negative-control individuals were never in training -> should be ~0).")
+    lines.append("=" * 84)
+    lines.append(f"{'Model':<18}{'Baseline':>10}{'Optimized':>11}{'Neg-ctrl':>10}{'Adj(o-n)':>10}{'p(McN)':>9}")
+    lines.append("-" * 84)
     for model, res in model_results.items():
         b, g, t = res["baseline"], res["gcg"], res.get("test", {})
-        ratio = t.get("ratio", 0.0)
-        rlo, rhi = t.get("ratio_ci_low"), t.get("ratio_ci_high")
-        ci = f"{ratio:.2f} [{rlo:.2f},{rhi:.2f}]" if rlo is not None else f"{ratio:.2f}"
+        neg = g.get("negative_control_emr", 0.0)
+        adj = g["emr_mean"] - neg
         lines.append(
-            f"{model:<20}"
-            f"{b['emr_mean']:>10.1f}±{b['emr_std']:<4.1f}"
-            f"{g['emr_mean']:>10.1f}±{g['emr_std']:<4.1f}"
-            f"{ci:>18}{_fmt_p(t.get('p_value')):>12}"
+            f"{model:<18}{b['emr_mean']:>10.1f}{g['emr_mean']:>11.1f}"
+            f"{neg:>10.1f}{adj:>+10.1f}{_fmt_p(t.get('p_value')):>9}"
         )
     lines.append("")
 
