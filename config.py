@@ -371,6 +371,36 @@ class DiscoveryConfig:
 
 
 @dataclass
+class ExperimentConfig:
+    """Config for the forcing-vs-memorization experiment suite (E1-E21)."""
+    run_id: str = "run1"
+
+    # --- E3 capacity sweep (the signature experiment) ---
+    # Denser sampling at SMALL k, where the forcing floor's knee lives.
+    capacity_k_grid: List[int] = field(default_factory=lambda: [
+        1, 2, 3, 4, 6, 8, 12, 16, 20, 24, 32, 48, 64])
+    capacity_sweep_n_targets: int = 150   # fixed subset per arm across all k
+
+    # --- E5 frequency response (0 == the negative-control tier) ---
+    frequency_tiers: List[int] = field(default_factory=lambda: [0, 1, 2, 5, 10, 20, 50])
+
+    # --- Power (E6): n>=761/arm for a <=5pp CI half-width at p~0.45; see paper 6.6.
+    #     200 individuals x 6 fields = 1200 targets/arm. Controls matched 1:1-ish.
+    n_individuals_full: int = 200
+    n_controls_full: int = 800
+
+    # --- Probes run against every target (the columns of Table 2) ---
+    probes: List[str] = field(default_factory=lambda: [
+        "fixed", "gcg_free", "gcg_anchored", "gcg_fluent",
+        "softprompt", "random_restart", "piicompass", "piiscope"])
+
+    # --- E14 norm-limited soft-prompt sweep ---
+    softprompt_norm_grid: List[float] = field(default_factory=lambda: [0.5, 1.0, 2.0, 4.0, 8.0])
+
+    # held-out reference model for target_H_bits + linguistic ppl (reuse ling_cfg)
+
+
+@dataclass
 class DefenseConfig:
     # Evaluate every input filter against BOTH the naive GCG suffix and the
     # fluency-regularized (adaptive) suffix, so we report honest degradation.
@@ -395,6 +425,7 @@ eval_cfg = EvalConfig()
 ling_cfg = LinguisticConfig()
 defense_cfg = DefenseConfig()
 discovery_cfg = DiscoveryConfig()
+exp_cfg = ExperimentConfig()
 
 
 # ---------------------------------------------------------------------------
@@ -456,3 +487,7 @@ if _soft:
 _mqb = _env_int("PII_MULTIQUERY_BUDGET")
 if _mqb:
     discovery_cfg.multiquery_budget = _mqb
+
+_rid = os.environ.get("PII_RUN_ID")
+if _rid:
+    exp_cfg.run_id = _rid
