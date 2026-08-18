@@ -34,9 +34,17 @@ export PYTHONUNBUFFERED=1   # flush prints live so `tail -f` shows real-time pro
 # (Applied uniformly to baseline/GCG/random/adaptive so the paired metric aligns.)
 if [ -n "${PII_MAX_TARGETS:-}" ]; then export PII_MAX_TARGETS; fi
 
+# --- Forcing-suite (experiments.py) knobs ------------------------------------
+# Experiments sharded by FIELD (E1/E2/E4/E5) and by CAPACITY k (E3).
+# KGRID must match config.ExperimentConfig.capacity_k_grid.
+EXPS_FIELD=(E1 E2 E4 E5)
+KGRID=(1 2 3 4 6 8 12 16 20 24 32 48 64)
+
 # --- Derived counts (used to size the --array ranges) ------------------------
 NMODELS=${#MODELS[@]}
 NSEEDS=${#SEEDS[@]}
 NFIELDS=${#FIELDS[@]}
+NK=${#KGRID[@]}
 NCOMBOS=$(( NMODELS * NSEEDS ))               # coarse: model x seed
 NGCGSHARDS=$(( NMODELS * NSEEDS * NFIELDS ))  # field-parallel: model x seed x field
+NE3SHARDS=$(( NMODELS * NSEEDS * NK ))        # E3 capacity: model x seed x k
