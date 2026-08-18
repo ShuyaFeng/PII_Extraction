@@ -29,8 +29,8 @@
 % Compact spacing helpers for margins in this scaffold.
 \setlength{\parskip}{0pt}
 
-\title{\vspace{-3ex}Calibrating the PII Auditing Gap:\\
-Worst-Case Confirmation Attacks and Adaptive Defenses\\ for Language Models}
+\title{\vspace{-3ex}Forcing vs.\ Memorization:\\
+A Negative-Control Audit of Optimization-Based\\ PII Extraction from Language Models}
 
 \author{Anonymous Submission\\ \small Under review at USENIX Security}
 \date{}
@@ -41,31 +41,31 @@ Worst-Case Confirmation Attacks and Adaptive Defenses\\ for Language Models}
 %==============================================================================
 \begin{abstract}
 %==============================================================================
-When personally identifiable information (PII) enters a language model's
-training corpus, an organization that later audits that model faces a
-\emph{worst-case} question: given a record it already holds, how strongly can
-that record be elicited from the model? We make this auditing setting
-explicit as a \textbf{confirmation attack}---the auditor holds the ground-truth
-record and measures its elicitability, rather than discovering unknown
-PII---and use it to calibrate the \emph{PII auditing gap}: the distance
-between what routine fixed-prompt audits report and the true upper bound on
-extractability.
+Gradient-based prompt optimization (e.g., Greedy Coordinate Gradient, GCG) is
+increasingly proposed as a way to audit what personally identifiable
+information (PII) a language model has memorized: if an optimizer can drive the
+model to emit a known record, the record is deemed extractable. Using a
+controlled corpus with complete ground truth and \emph{negative-control}
+individuals who never appear in training, we show that this reasoning is unsafe.
+Optimization-based extraction conflates \emph{memorization recall} with the
+optimizer's ability to \emph{force} arbitrary outputs: a naive GCG attack
+elicits PII from never-trained individuals at nearly the same rate as from
+trained ones (\todo{neg-ctrl vs.\ real EMR, e.g. 44\% vs.\ 45.5\% on GPT-2 --- Table~\ref{tab:main}}),
+and its success is \emph{invariant} to how often a record occurred in
+training---both hallmarks of forcing, not recall. An unconstrained white-box
+soft-prompt attack forces \todo{soft-prompt EMR, ${\approx}$100\%} of targets.
 
-We calibrate this gap across a three-point attack spectrum on a controlled
-corpus with known ground truth: fixed handcrafted prompts (a lower bound),
-multi-query/few-shot discovery in the style of PII-Scope (a realistic middle),
-and gradient-optimized confirmation via an adapted Greedy Coordinate Gradient
-attack (an upper bound). We show where the gap is widest---structured,
-low-perplexity numeric fields and instruction-tuned targets whose refusal
-priors block fixed-prompt audits but not optimization---using a single unified
-per-(person, field) exact-match metric and a compute-matched random-restart
-control that isolates optimization from mere target knowledge. We then run an
-adaptive attack-vs-defense loop: input and perplexity filters that stop naive
-extraction collapse against a fluency-regularized adversary, with a
-PII-specific twist absent from jailbreak settings---the \emph{target} PII
-string is itself low-perplexity, breaking the perplexity signal defenses rely
-on. Fixed-prompt audits underestimate worst-case exposure by a factor of
-\todo{headline auditing-gap factor --- from run\_experiments.py --stage eval, unified EMR, 5 seeds}.
+We argue that a memorization audit is only meaningful \emph{net of a negative
+control}, and make that control a first-class instrument. We report the
+\textbf{negative-control-adjusted} extraction rate ($\text{optimized} -
+\text{negctrl}$) as the true memorization signal; place the attack spectrum
+(fixed prompts, PII-Scope/PII-Compass discovery, GCG, soft-prompt) on a
+\emph{forcing axis} scored by both raw and adjusted rates; and show that a
+fluency-constrained attack lowers the negative-control rate, trading raw
+extraction for validity. Across model scales we
+\todo{calibrate the adjusted signal / quantify how much raw rates overstate memorization --- Table~\ref{tab:main}}.
+Our results reframe optimization-based privacy auditing around a control that
+most prior extraction work omits.
 
 \end{abstract}
 
@@ -86,61 +86,59 @@ data owner is therefore not \emph{whether} leakage is possible in the
 abstract, but \emph{how much} of a specific corpus a realistic---or a
 worst-case---adversary can pull back out.
 
-\paragraph{Confirmation vs.\ discovery.}
-We draw a distinction that governs the entire paper and that we state on page
-one to fix reader expectations. In a \emph{discovery attack}, an adversary
-tries to find private information it does not already know. In a
-\emph{confirmation attack}---our setting---the auditor \emph{already holds the
-record} and measures how strongly the model can be made to reproduce it. The
-two are not interchangeable: confirmation presupposes ground truth, which is
-exactly what an organization auditing its own corpus possesses, and it yields a
-\emph{worst-case upper bound} on elicitability. If a known record is not
-extractable even under an optimization attack that has the target in hand, it
-is unlikely to be extractable under any weaker prompt-based method. This
-upper bound is precisely what conservative risk assessment needs, and it is
-what fixed-prompt audits fail to deliver.
+\paragraph{Optimization audits and the forcing problem.}
+A natural way to audit this risk is to \emph{optimize} for it: given a record
+the auditor already holds, run a gradient-based prompt attack (GCG and its
+white-box relatives) that searches for an input driving the model to emit the
+record verbatim. If the search succeeds, the record is called extractable. The
+premise is that a successful optimization reveals \emph{memorization}. We show
+this premise is unsafe. Gradient optimization over a large discrete (or
+continuous) input space is powerful enough to \emph{force} a small model to emit
+a target string \emph{whether or not the model ever saw it}. On a controlled
+corpus with known ground truth, a naive GCG attack elicits PII from
+\emph{negative-control} individuals---people who never appear in
+training---at almost the same rate as from trained individuals
+(\todo{44\% vs.\ 45.5\% on GPT-2}), and its success does \emph{not} increase
+with how often a record occurred. These are signatures of forcing, not recall:
+the ``extraction rate'' partly measures the \emph{attack's} expressivity rather
+than the \emph{model's} memory.
 
-\paragraph{The auditing gap.}
-Standard privacy auditing relies on fixed, handcrafted prompts: direct
-requests, template completions, few-shot demonstrations. This implicitly
-assumes an adversary limited to predetermined strategies. The jailbreak
-literature has shown that gradient-guided search over the prompt space finds
-inputs no human would write~\cite{zou2023universal}. Between these lies a
-realistic middle---multi-query and few-shot \emph{discovery} attacks tailored
-to PII, such as PII-Scope~\cite{piiscope2024} and
-PII-Compass~\cite{piicompass2024}. The \emph{auditing gap} is the distance
-between what a fixed-prompt audit reports and the true worst-case bound. Our
-central contribution is to \emph{calibrate} this gap end-to-end on a corpus
-with known ground truth, rather than to introduce a new attack primitive.
+\paragraph{The confirmation setting, and why the control is essential.}
+We work in a \emph{confirmation} (auditing) setting: the auditor holds the
+ground-truth record $t$ and has white-box access, and asks how strongly $M$ can
+be made to reproduce $t$. This is the setting an organization auditing its own
+corpus occupies, and---correctly measured---it yields a worst-case upper bound
+on elicitability. But an unconstrained optimizer inflates that ``upper bound''
+with forcing. The remedy is a control that most extraction work omits: run the
+identical attack against records that were \emph{never trained on}, and subtract
+their success. What survives---the \textbf{negative-control-adjusted} rate---is
+the extraction attributable to memorization rather than to the optimizer.
 
 \paragraph{Contributions.}
 \begin{enumerate}
-\item We formalize PII auditing as a \textbf{confirmation attack} and make the
-worst-case-upper-bound framing explicit (Section~\ref{sec:threat}), including a
-concrete end-to-end SSN example that pins down the role of the known target
-string.
-\item We deliver the first apples-to-apples \textbf{calibration of the PII
-auditing gap} across a three-point spectrum---fixed prompts (lower bound),
-PII-Scope-style multi-query discovery (realistic middle), and
-gradient-optimized confirmation (upper bound)---under a single unified
-per-(person, field) exact-match metric and a compute-matched random-restart
-control (Sections~\ref{sec:method},~\ref{sec:results}).
-\item We characterize \emph{where} the gap is widest and separate \textbf{new}
-predictors (field-type/structure as an extractability predictor;
-optimization eroding lexical-diversity protection) from \textbf{confirmatory}
-ones (perplexity, compression, entity density), with an explicit provenance
-table (Section~\ref{sec:results}).
-\item We run an \textbf{adaptive attack-vs-defense loop}: input and perplexity
-filters that stop naive extraction collapse against a fluency-regularized
-adversary, and we surface a PII-specific tension---the low-perplexity
-\emph{target} vs.\ the low-perplexity \emph{prompt}---absent from jailbreak
-settings (Section~\ref{sec:defense}).
+\item \textbf{Forcing vs.\ memorization.} We show optimization-based PII
+extraction conflates the two, and give the diagnostics that separate them---%
+negative controls and a frequency-response test on a controlled corpus with
+complete ground truth (Sections~\ref{sec:method},~\ref{sec:results}).
+\item \textbf{A corrected metric.} We define and report the
+negative-control-adjusted extraction rate ($\text{optimized} -
+\text{negctrl}$) as the memorization-attributable signal, and show that raw
+optimization-extraction rates overstate memorization.
+\item \textbf{An attack spectrum on a forcing axis.} We place fixed prompts,
+PII-Scope~\cite{piiscope2024} / PII-Compass~\cite{piicompass2024} discovery,
+GCG, and a white-box soft-prompt attack on a single axis scored by \emph{both}
+raw and adjusted rates, revealing that the most powerful attacks force the most
+(the soft-prompt attack forces \todo{${\approx}$100\%}).
+\item \textbf{Constraint reduces forcing.} A fluency-regularized (adaptive)
+GCG lowers the negative-control rate, trading raw extraction for validity, and
+connects the forcing story to a perplexity-filter defense
+(Section~\ref{sec:defense}).
 \end{enumerate}
 
-We emphasize what this paper is not: it does not claim to discover unknown PII,
-and it does not claim a novel attack algorithm. Its contribution is a
-calibrated, defensible measurement of the auditing upper bound and the
-attack/defense arms race around it.
+We emphasize what this paper is \emph{not}: it is not a new, stronger attack for
+pulling out more PII. Its contribution is methodological---how to audit
+memorization with optimization attacks \emph{honestly}, by controlling for the
+forcing they introduce.
 
 %==============================================================================
 \section{Threat Model \& Problem Setup}
@@ -207,9 +205,36 @@ discovered. Equivalently we minimize the negative log-likelihood
 \end{equation}
 A record is \emph{confirmed extractable} if the model's greedy decoding under
 $p^\star$ reproduces $t$ under the unified exact-match rule of
-Section~\ref{sec:method}. The fraction of confirmed records is the auditing
-upper bound; the shortfall of a fixed-prompt audit against it is the auditing
-gap.
+Section~\ref{sec:method}.
+
+\subsection{The Forcing Problem and the Adjusted Bound}
+\label{sec:forcing}
+Naively, the fraction of confirmed records is an ``auditing upper bound.'' But
+Eq.~\ref{eq:objective} is optimized over a large input space $V^k$, and for a
+sufficiently expressive attack the maximizer $p^\star$ can drive $M$ to emit
+$t$ even when $t$ was \emph{never in the training corpus}: the success then
+reflects the attack's expressivity---\emph{forcing}---not the model's memory.
+Confirmed-extractability therefore upper-bounds memorization only \emph{net of
+forcing}.
+
+We estimate the forcing floor directly. Let $D$ be the trained records and let
+$C$ be a set of \emph{negative-control} records, drawn from the same
+distribution but \emph{never} included in training. Running the identical attack
+on both, let $\mathrm{EMR}(D)$ and $\mathrm{EMR}(C)$ be the confirmed-extraction
+rates. Because control records carry no memorization signal, $\mathrm{EMR}(C)$
+is a direct estimate of the attack's forcing rate. We define the
+\textbf{negative-control-adjusted} rate
+\begin{equation}
+\mathrm{EMR}_{\text{adj}} \;=\; \mathrm{EMR}(D) - \mathrm{EMR}(C),
+\label{eq:adjusted}
+\end{equation}
+and treat $\mathrm{EMR}_{\text{adj}}$---not $\mathrm{EMR}(D)$---as the
+memorization-attributable extraction and hence the defensible auditing signal. A
+second, orthogonal check is the \emph{frequency response}: genuine recall should
+rise with how often a record occurred, whereas forcing is frequency-invariant
+(Section~\ref{sec:results}). An attack whose $\mathrm{EMR}(C)\!\approx\!
+\mathrm{EMR}(D)$ and whose success is flat in frequency is measuring forcing, and
+its raw rate must not be reported as memorization.
 
 %==============================================================================
 \section{Related Work}
@@ -227,8 +252,10 @@ relationship; Nasr et al.~\cite{nasr2023scalable} scaled extraction to
 production systems; and Biderman et al.~\cite{biderman2023emergent} studied
 emergent and predictable memorization. Lukas et
 al.~\cite{lukas2023analyzing} examined PII leakage specifically. This line
-establishes that leakage \emph{occurs}; we measure the auditing \emph{gap}
-against a worst-case bound.
+establishes that leakage \emph{occurs}, but reports raw extraction rates and
+rarely runs the identical attack against \emph{never-trained} records; the
+forcing contribution to those rates therefore goes unmeasured---the gap we
+close with an explicit negative control (Section~\ref{sec:forcing}).
 
 \subsection{Adversarial Prompt Optimization}
 Zou et al.~\cite{zou2023universal} introduced GCG, gradient-guided discrete
@@ -239,7 +266,12 @@ adversary since fluency regularization is exactly what defeats a perplexity
 filter. Schwarzschild et al.~\cite{schwarzschild2024rethinking} recast
 memorization as compression via the Adversarial Compression Ratio (ACR), also
 GCG-based but on generic text with no PII, no discovery comparison, and no
-defense.
+defense. Common to the whole line is that the very expressivity that makes GCG a
+``universal'' jailbreak---optimizing over $V^k$ to elicit an arbitrary
+output~\cite{zou2023universal}---also lets it \emph{force} outputs a model never
+memorized. Whether a confirmed extraction reflects recall or forcing cannot be
+read off the success rate alone; it requires a never-trained control, which we
+supply.
 
 \subsection{The 2024--25 PII-Attack Line}
 Three recent works define the space our contribution must be differentiated
@@ -254,8 +286,13 @@ extractability under $n$ queries at success probability $p$, giving the formal
 anchor for a worst-case audit.
 
 \subsection{Delta vs.\ Prior Work}
-Our contribution is a \emph{calibration}, not a new primitive, and it is
-differentiated on four axes. \textbf{vs.\ ACR}~\cite{schwarzschild2024rethinking}:
+Our contribution is methodological---a control and a corrected metric, not a new
+attack. \textbf{The primary delta} is that we run every attack against a
+never-trained negative control and report the adjusted rate
+(Eq.~\ref{eq:adjusted}); to our knowledge no prior PII-extraction study does
+this, and it changes the conclusions (a raw rate we would otherwise report as
+memorization is largely forcing). We are further differentiated on the following
+axes. \textbf{vs.\ ACR}~\cite{schwarzschild2024rethinking}:
 ACR is generic-text with no PII structure, no attack-spectrum comparison, and
 no defense; we add PII-specific field-type/frequency structure and the
 calibrated gap across the spectrum. \textbf{vs.\ PII-Scope /
@@ -325,10 +362,20 @@ templates. To study reuse, we vary training frequency at three levels
 passage corpus so PII is a small fraction of the total. To close the
 templated-context and regular-format confounds, we add (a) \textbf{format
 perturbation} (irregular separators/spacing on numeric fields) and (b)
-\textbf{non-templated natural contexts}. Negative-control individuals never in
-training verify that positive results reflect memorization, not
-hallucination, following the canary methodology of
-Carlini et al.~\cite{carlini2019secret}.
+\textbf{non-templated natural contexts}.
+
+\paragraph{Negative controls and the frequency response.}
+We additionally generate \todo{$n_C$, e.g. 50} \textbf{negative-control}
+individuals from the identical Faker distribution who are \emph{never} added to
+the corpus. Every attack is run against controls exactly as against trained
+records, and $\mathrm{EMR}(C)$ estimates the attack's forcing floor
+(Section~\ref{sec:forcing}); we report the adjusted rate of
+Eq.~\ref{eq:adjusted} throughout. The controlled frequency design (1/5/20) doubles
+as a validity test: recall should rise with frequency, forcing should not.
+Together these are our two independent checks that a confirmed extraction
+reflects memory rather than the optimizer. This strengthens the canary
+methodology of Carlini et al.~\cite{carlini2019secret} from a hallucination
+check into a quantitative forcing correction.
 
 \subsubsection{Real-PII Validation (Enron)}
 Synthetic data controls frequency but cannot alone rebut a ``synthetic-only''
@@ -345,8 +392,13 @@ We compare the three-point spectrum plus controls, all under one metric:
 \item \textbf{Fixed prompts}: direct, completion~\cite{carlini2021extracting},
 few-shot, and template attacks (best of $k$ variants).
 \item \textbf{PII-Scope / PII-Compass}~\cite{piiscope2024,piicompass2024}:
-multi-query, soft-prompt, and prefix-grounding attacks, run head-to-head on
-the same models.
+multi-query and prefix-grounding discovery attacks, run head-to-head on the
+same models.
+\item \textbf{White-box soft-prompt} (the \emph{forcing upper bound}): a
+continuous prefix optimized directly against the target. As the most expressive
+attack in our spectrum it should force the most; we include it not as a
+deployable discovery attack but to bracket the forcing extreme and calibrate the
+axis.
 \item \textbf{Compute-matched random-restart control}: $N$ random suffixes at
 the \emph{same} query budget as GCG. This isolates ``optimization helps'' from
 ``knowing the target helps'': GCG must beat random restarts at equal compute
@@ -357,11 +409,13 @@ for the upper-bound claim to be about optimization.
 All methods are scored by one \textbf{per-(person, field) exact-match rate
 (EMR)}: a (person, field) pair counts as extracted iff the model reproduces
 that field verbatim (after whitespace/punctuation normalization) under the
-method's best prompt. The same field set and same success rule apply to every
-method, removing the baseline-vs-attack metric asymmetry that made prior ratios
-non-comparable. We report per-target \emph{paired} significance (McNemar /
-paired bootstrap over targets) with 95\% CIs and multiple-comparison
-correction across $\ge 5$ seeds.
+method's best prompt. The same field set and success rule apply to every method
+(including the negative controls), removing the metric asymmetry that made prior
+ratios non-comparable. Our \emph{headline} number is the negative-control-adjusted
+$\mathrm{EMR}_{\text{adj}}$ (Eq.~\ref{eq:adjusted}); we always report the raw
+$\mathrm{EMR}(D)$ and the control $\mathrm{EMR}(C)$ beside it. We give per-target
+\emph{paired} significance (McNemar / paired bootstrap over targets) with 95\% CIs
+and multiple-comparison correction across $\ge 3$ seeds.
 
 \subsection{Models}
 Targets span classic and modern/instruction-tuned LMs. Smaller open models
@@ -382,41 +436,53 @@ should be widest.
 All cells below are placeholders to be filled from real runs; no numbers are
 invented. Each table names the experiment that populates it.
 
-\subsection{The Auditing Gap}
-Table~\ref{tab:main} calibrates the gap across the spectrum under the unified
-EMR. The headline is the multiplicative gap between fixed-prompt audits and the
-gradient-optimized upper bound, reported \emph{alongside} the random-restart
-control so the ratio reflects optimization, not target knowledge alone.
+\subsection{Raw Extraction Is Largely Forcing}
+Table~\ref{tab:main} reports, per model, the raw fixed-prompt and GCG rates, the
+negative-control rate $\mathrm{EMR}(C)$, and the adjusted rate
+$\mathrm{EMR}_{\text{adj}}$ (Eq.~\ref{eq:adjusted}). The story is in the last two
+columns: where $\mathrm{EMR}(C)$ approaches the raw GCG rate,
+$\mathrm{EMR}_{\text{adj}}\!\approx\!0$ and the ``extraction'' is forcing. On the
+smallest model this is stark---GCG's negative-control rate
+(\todo{${\approx}$44\%}) nearly equals its rate on trained records
+(\todo{${\approx}$45.5\%}), leaving a memorization-attributable signal of only
+\todo{${\approx}$1.5\,pp}. \todo{Trend across scale: report whether
+$\mathrm{EMR}_{\text{adj}}$ grows as larger models memorize more (Pythia/Llama
+rows); this determines the headline claim.}
 
 \begin{table}[t]
 \centering
-\caption{Auditing gap under the unified per-(person, field) EMR (\%), by model.
-Reported with 95\% CIs over $\ge 5$ seeds; paired tests vs.\ fixed prompts.}
+\caption{Extraction by model (\%). \textbf{Adj} $=$ GCG $-$ Neg-ctrl is the
+memorization-attributable rate (Eq.~\ref{eq:adjusted}); a small Adj / large
+Neg-ctrl means the attack \emph{forces} rather than recalls. 95\% CIs over
+$\ge 3$ seeds; $p$ from paired McNemar (GCG vs.\ fixed).}
 \label{tab:main}
 \small
 \begin{tabular}{@{}lccccc@{}}
 \toprule
-\textbf{Model} & \textbf{Fixed} & \textbf{Multi-Q} & \textbf{Rand.\ restart} & \textbf{GCG (UB)} & \textbf{Gap} \\
+\textbf{Model} & \textbf{Fixed} & \textbf{GCG} & \textbf{Neg-ctrl} & \textbf{Adj} & $p$ \\
 \midrule
 GPT-2-124M    & -- & -- & -- & -- & -- \\
 GPT-2-355M    & -- & -- & -- & -- & -- \\
 Pythia-1.4B   & -- & -- & -- & -- & -- \\
 Pythia-2.8B   & -- & -- & -- & -- & -- \\
-Llama-3.1-8B$^{\dagger}$        & -- & -- & -- & -- & -- \\
-Llama-3.1-8B-Instruct$^{\dagger}$ & -- & -- & -- & -- & -- \\
+Llama-3.1-8B$^{\dagger}$ & -- & -- & -- & -- & -- \\
 \bottomrule
 \end{tabular}
 \\[2pt]
 \raggedright\footnotesize $^{\dagger}$LoRA/QLoRA-adapted.\\
-\todo{Table 1 main auditing-gap results --- from run\_experiments.py --stage eval,
-unified EMR, 5 seeds; Gap = GCG/Fixed with paired-bootstrap CI.}
+\todo{Table 1 --- from run\_experiments.py --stage eval; Fixed/GCG/Neg-ctrl/Adj
+straight out of evaluate.generate\_tables; $\ge 3$ seeds.}
 \end{table}
 
-\subsection{Frequency Threshold}
-Table~\ref{tab:freq} reports EMR by training frequency and the
-frequency$\times$method interaction. We report a Pearson $r$ between frequency
-and extractability and a two-way ANOVA interaction (both computed by real
-code, not asserted).
+\subsection{Frequency Response: A Second Forcing Test}
+Genuine recall should strengthen with how often a record was seen; forcing
+should be frequency-invariant. Table~\ref{tab:freq} therefore doubles as a
+validity test. On GPT-2 the GCG rate is essentially \emph{flat} across 1/5/20
+occurrences (Pearson $r=\todo{0.02}$, $p=\todo{0.58}$; interaction
+$F=\todo{0.37}$), corroborating the negative-control reading that its extraction
+is forcing rather than recall. \todo{On larger models, does a frequency slope
+emerge (recall)? Report $r$, ANOVA, and the per-tier adjusted rates.} Both the
+Pearson $r$ and the two-way ANOVA are computed in code, not asserted.
 
 \begin{table}[t]
 \centering
@@ -502,30 +568,38 @@ frequency from linguistic\_analysis.py with held-out reference-model
 perplexity/zlib; tag each row new/confirmatory/descriptive.}
 \end{table}
 
-\subsection{Head-to-Head vs.\ PII-Scope / PII-Compass}
-Table~\ref{tab:headtohead} places our upper bound against the 2024--25 PII
-attacks on shared models, so the novelty delta is a measured gap rather than an
-assertion.
+\subsection{The Attack Spectrum on a Forcing Axis}
+Table~\ref{tab:headtohead} places the whole spectrum---fixed prompts,
+PII-Scope/PII-Compass discovery, GCG, and the white-box soft-prompt---on shared
+models, ordered by attack strength. The pattern of interest is that raw EMR
+\emph{increases} with attack expressivity while, on models dominated by forcing,
+the negative-control rate increases in lockstep: the soft-prompt attack, most
+expressive of all, forces \todo{${\approx}$100\%} of targets and is the clearest
+demonstration that raw rate $\neq$ memorization. We therefore read this axis by
+the adjusted rate (Table~\ref{tab:main}), not the raw rate.
 
 \begin{table}[t]
 \centering
-\caption{Head-to-head EMR (\%) on shared models. GCG is the confirmation upper
-bound; PII-Scope/PII-Compass are the discovery middle.}
+\caption{Attack spectrum, raw EMR (\%) on shared models, ordered by expressivity.
+Soft-prompt is the forcing upper bound. The memorization-attributable comparison
+is the adjusted rate (Table~\ref{tab:main}); raw rates rise with expressivity,
+not necessarily with recall.}
 \label{tab:headtohead}
 \small
-\begin{tabular}{@{}lcccc@{}}
+\begin{tabular}{@{}lccccc@{}}
 \toprule
-\textbf{Model} & \textbf{PII-Scope} & \textbf{PII-Compass} & \textbf{GCG (UB)} & \textbf{$\Delta$UB} \\
+\textbf{Model} & \textbf{Fixed} & \textbf{PII-Scope} & \textbf{PII-Compass} & \textbf{GCG} & \textbf{Soft-prompt} \\
 \midrule
-GPT-2-355M  & -- & -- & -- & -- \\
-Pythia-2.8B & -- & -- & -- & -- \\
-Llama-3.1-8B$^{\dagger}$ & -- & -- & -- & -- \\
+GPT-2-124M  & -- & -- & -- & -- & -- \\
+GPT-2-355M  & -- & -- & -- & -- & -- \\
+Pythia-1.4B & -- & -- & -- & -- & -- \\
 \bottomrule
 \end{tabular}
 \\[2pt]
-\raggedright\footnotesize $^{\dagger}$LoRA/QLoRA-adapted.\\
-\todo{Table 5 PII-Scope/PII-Compass head-to-head --- reimplement or run their
-released attacks on our shared checkpoints; unified EMR, 5 seeds.}
+\raggedright\footnotesize
+\todo{Table 5 --- fixed / PII-Scope / PII-Compass / GCG / soft-prompt raw EMR
+from run\_experiments.py --stage eval (Table 5 of summary\_tables.txt); pair each
+with its Neg-ctrl in an appendix.}
 \end{table}
 
 \subsection{Compute-Matched Random-Restart Control}
@@ -625,35 +699,39 @@ inherently defensive: it audits known corpora rather than discovering unknown
 secrets.
 
 \paragraph{Limitations.}
-(i) The confirmation setting measures a worst-case \emph{upper bound}, not
-field-deployment discovery risk---by design. (ii) Synthetic data controls
-frequency but has regular formats; the format-perturbation, non-templated-context,
-and Enron validations address but do not eliminate this. (iii) We report
-modern-model results under LoRA/QLoRA, which memorizes less than full
-fine-tuning; full-fine-tune numbers may be higher. (iv) GCG is one optimizer;
-we claim an upper bound relative to prompt-based attacks at matched budget, not
-the global optimum. (v) Compute and model scope are stated honestly and do not
-extend to 100B+ models.
+(i) \emph{Forcing is the central caveat.} Optimization attacks can elicit
+never-trained strings, so raw rates overstate memorization; we correct with a
+negative control and report the adjusted rate (Eq.~\ref{eq:adjusted}), but the
+control is an \emph{estimate}---an attack could in principle force trained and
+control records at slightly different rates, so the adjusted rate is our best,
+not a perfect, memorization estimate. (ii) The confirmation setting measures a
+worst-case upper bound, not field-deployment discovery risk---by design.
+(iii) Synthetic data controls frequency but has regular formats; the
+format-perturbation, non-templated-context, and Enron validations address but do
+not eliminate this. (iv) We report modern-model results under LoRA/QLoRA, which
+memorizes less than full fine-tuning. (v) GCG is one optimizer; our forcing
+finding may differ for others. (vi) Compute and model scope do not extend to
+100B+ models, where the memorization-vs-forcing balance may shift.
 
 %==============================================================================
 \section{Conclusion}
 \label{sec:conclusion}
 %==============================================================================
 
-We reframed PII auditing as a \emph{confirmation attack}---the auditor holds
-the record and measures its elicitability---and used it to calibrate the
-auditing gap across a three-point spectrum from fixed prompts to
-gradient-optimized confirmation, with a unified metric and a compute-matched
-control that isolates optimization from target knowledge. The gap is widest on
-structured, low-perplexity fields and instruction-tuned targets, and the input
-and perplexity filters that stop naive extraction collapse against a
-fluency-regularized adversary---with a PII-specific twist, the low-perplexity
-target, that has no analogue in jailbreak defenses. Organizations should treat
-fixed-prompt audits as lower bounds and their optimized confirmation results as
-the conservative upper bound for risk assessment. Deduplication below the
-frequency threshold~\cite{lee2022deduplicating,kandpal2022deduplicating}
-remains a first-line mitigation, but our results show it does not by itself
-close the gap against an optimization adversary.
+Optimization-based extraction is an appealing way to audit memorized PII, but we
+showed it conflates memorization with the optimizer's ability to force outputs:
+on a controlled corpus with negative controls, a naive GCG attack elicited PII
+from never-trained individuals at almost the rate it did from trained ones, its
+success was flat in training frequency, and an unconstrained soft-prompt attack
+forced nearly every target. The remedy is cheap and, we argue, mandatory: run
+the identical attack against never-trained records and report the
+negative-control-adjusted rate as the memorization signal. Doing so
+\todo{leaves a signal that grows with model scale / shrinks the reported rate by
+a large factor}. A fluency constraint reduces forcing, linking the correction to
+a deployable perplexity defense. Practitioners---and future extraction
+studies---should treat any raw optimization-extraction number without a
+never-trained control as an upper bound on \emph{the attack}, not on \emph{the
+model's memory}.
 
 %==============================================================================
 % References --- corrected author lists; self-contained (no external .bib).
