@@ -82,3 +82,42 @@ worst possible error for this paper. `make_tables.py` cross-checks that the
 
 See the pasted experiment list for the full E1–E21 spec, per-experiment failure
 modes, and the submission checklist.
+
+## 6. Tier-1 drivers now implemented (E7 / E10 / E12)
+
+Run each as one SLURM task via `slurm/exp_tier1.slurm` (NOT field/k-sharded):
+
+```bash
+# E7  budget-matched control (finetuned model must exist under models/<name>)
+sbatch --export=ALL,EXP=E7,MODEL=gpt2,SEED=42,PII_RUN_ID=run1 slurm/exp_tier1.slurm
+
+# E10 Pythia + the Pile (NO training; needs a local Pile shard, or a smoke stand-in)
+sbatch --export=ALL,EXP=E10,MODEL=EleutherAI/pythia-1.4b,SEED=42,\
+PII_PILE_SHARD=/path/to/pile/00.jsonl.zst,PII_RUN_ID=run1 slurm/exp_tier1.slurm
+#   offline path-exercising smoke (no shard): add PII_PILE_SMOKE=1
+
+# E12 defenses at fixed benign FPR — run AFTER E1/E4 have logged prompts
+sbatch --export=ALL,EXP=E12,MODEL=gpt2,SEED=42,PII_RUN_ID=run1 slurm/exp_tier1.slurm
+```
+
+- **E7** (`run_E7_budget_matched`): per (person,field) logs `gcg_free`,
+  `fixed_budget` (natural prompts sampled at gcg_free's OWN forward-pass budget),
+  and single-query `fixed`. → `results/tables/budget_e7.txt`. Reads: if
+  `fixed_budget ≈ fixed ≪ gcg_free`, the gain is optimization, not query count.
+- **E10** (`run_E10_pile_membership`): attacks the BASE (Pile-pretrained) model on
+  real Pile strings (members, measured count>0) vs format-matched absent controls;
+  probes `fixed`(real-context completion = memorization), `gcg_free`/`gcg_anchored`
+  (forcing), `random_restart`. Registry auto-built by `build_pile_registry()` from
+  `PII_PILE_SHARD`. → `results/tables/pile_e10.txt`. `gcg_free` Adj≈0 ⇒ forcing
+  replicates on a model/corpus we did not construct (kills the W2 synthetic-data
+  objection).
+- **E12** (`run_E12_defenses`): reads the attempt log; reports three defenses at a
+  fixed benign FPR — perplexity input filter, feature classifier (benign vs naive,
+  recall-drop on adaptive), and a **honeytoken tripwire** (canaries = control
+  strings; because forcing is target-agnostic the attack trips canaries at the same
+  rate it "extracts" real PII, with ~0 benign FPR). → `results/tables/defense_e12.txt`
+  + `results/defense_e12_<run>.json`.
+
+All three write through `AttemptLogger` / read the one log, so `make_tables.py`
+stays the single source of truth (E7→`budget_e7`, E10→`pile_e10`; E12 writes its
+own defense table since defenses are not per-attempt rows).

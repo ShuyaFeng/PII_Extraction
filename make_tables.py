@@ -67,6 +67,7 @@ _EXPRESSIVITY = {
     "random_restart": 24.0,
     "piiscope": 16.0,
     "piicompass": 8.0,
+    "fixed_budget": 4.0,      # compute-matched natural prompting (E7)
     "fixed_matched": 1.0,
     "fixed": 0.0,
 }
@@ -667,6 +668,97 @@ def substring_guard(df: pd.DataFrame) -> List[str]:
 
 
 # ---------------------------------------------------------------------------
+# E7 budget-matched control: is GCG's gain optimization, or just more queries?
+# ---------------------------------------------------------------------------
+
+def budget_e7(df: pd.DataFrame) -> Tuple[List[str], pd.DataFrame]:
+    e7 = df[df["exp_id"] == "E7"]
+    lines = ["=" * 100,
+             "E7 BUDGET-MATCHED CONTROL: optimization vs query budget",
+             "  fixed=1 query; fixed_budget=natural prompts sampled at gcg_free's OWN forward-pass",
+             "  budget; gcg_free=optimized at that budget. If fixed_budget ~ fixed << gcg_free, the",
+             "  gain is OPTIMIZATION, not queries. (fwd = mean forward_passes = the matched budget.)",
+             "=" * 100]
+    if len(e7) == 0:
+        lines.append("  (no E7 rows in log)")
+        lines.append("")
+        return lines, pd.DataFrame(columns=["model_name", "probe", "emr_trained",
+                                            "emr_control", "mean_forward_passes"])
+    csv_rows = []
+    order = {"gcg_free": 0, "fixed_budget": 1, "fixed": 2}
+    for model, gm in e7.groupby("model_name", sort=True):
+        lines.append(f"  model = {model}")
+        lines.append(f"    {'probe':<16}{'EMR(D)':>9}{'EMR(C)':>9}{'Adj[CI]':>22}"
+                     f"{'mean fwd':>10}{'n(D)':>7}")
+        lines.append("    " + "-" * 82)
+        probes = sorted(gm["probe"].dropna().unique(),
+                        key=lambda p: (order.get(p, 9), p))
+        for probe in probes:
+            gp = gm[gm["probe"] == probe]
+            d = _cluster_emr_ci(_person_groups(gp[gp["target_membership"] == "trained"]))
+            c = _cluster_emr_ci(_person_groups(gp[gp["target_membership"] == "control"]))
+            adj = _cluster_diff_ci(
+                _person_groups(gp[gp["target_membership"] == "trained"]),
+                _person_groups(gp[gp["target_membership"] == "control"]))
+            fwd = float(gp["forward_passes"].dropna().astype(float).mean()) \
+                if gp["forward_passes"].notna().any() else float("nan")
+            adj_str = f"{adj['diff']*100:+.1f}{_fmt_ci(adj['ci_low'], adj['ci_high'])}"
+            fwd_str = "n/a" if math.isnan(fwd) else f"{fwd:.0f}"
+            lines.append(f"    {probe:<16}{_pct(d['emr']):>9}{_pct(c['emr']):>9}"
+                         f"{adj_str:>22}{fwd_str:>10}{d['n_persons']:>7}")
+            csv_rows.append({"model_name": model, "probe": probe,
+                             "emr_trained": d["emr"], "emr_control": c["emr"],
+                             "adj": adj["diff"], "mean_forward_passes": fwd})
+        lines.append("")
+    return lines, pd.DataFrame(csv_rows)
+
+
+# ---------------------------------------------------------------------------
+# E10 Pythia + Pile (external validity): forcing on a model/corpus we did not make
+# ---------------------------------------------------------------------------
+
+def pile_e10(df: pd.DataFrame) -> Tuple[List[str], pd.DataFrame]:
+    e10 = df[df["exp_id"] == "E10"]
+    lines = ["=" * 100,
+             "E10 PYTHIA + THE PILE: forcing-vs-memorization on a model we did NOT train",
+             "  member=string present in the sampled Pile (count>0); control=format-matched, absent.",
+             "  fixed=real-context completion (MEMORIZATION baseline); gcg_free=force raw string (FORCING).",
+             "  Adj=EMR(member)-EMR(control); gcg_free Adj~0 => forcing replicates on real data.",
+             "=" * 100]
+    if len(e10) == 0:
+        lines.append("  (no E10 rows in log)")
+        lines.append("")
+        return lines, pd.DataFrame(columns=["model_name", "probe", "emr_member",
+                                            "emr_control", "adj", "adj_lo", "adj_hi"])
+    csv_rows = []
+    for model, gm in e10.groupby("model_name", sort=True):
+        lines.append(f"  model = {model}")
+        lines.append(f"    {'probe':<16}{'EMR(mem)':>10}{'EMR(ctrl)':>11}"
+                     f"{'Adj[CI]':>22}{'AUC':>8}{'n(mem)':>8}")
+        lines.append("    " + "-" * 84)
+        probes = sorted(gm["probe"].dropna().unique(),
+                        key=lambda p: (-_EXPRESSIVITY.get(p, 0.0), p))
+        for probe in probes:
+            gp = gm[gm["probe"] == probe]
+            d = _cluster_emr_ci(_person_groups(gp[gp["target_membership"] == "trained"]))
+            c = _cluster_emr_ci(_person_groups(gp[gp["target_membership"] == "control"]))
+            adj = _cluster_diff_ci(
+                _person_groups(gp[gp["target_membership"] == "trained"]),
+                _person_groups(gp[gp["target_membership"] == "control"]))
+            audit = _audit_ci(gp)
+            adj_str = f"{adj['diff']*100:+.1f}{_fmt_ci(adj['ci_low'], adj['ci_high'])}"
+            auc_str = "n/a" if math.isnan(audit["auc"]) else f"{audit['auc']:.3f}"
+            lines.append(f"    {probe:<16}{_pct(d['emr']):>10}{_pct(c['emr']):>11}"
+                         f"{adj_str:>22}{auc_str:>8}{d['n_persons']:>8}")
+            csv_rows.append({"model_name": model, "probe": probe,
+                             "emr_member": d["emr"], "emr_control": c["emr"],
+                             "adj": adj["diff"], "adj_lo": adj["ci_low"],
+                             "adj_hi": adj["ci_high"], "auc": audit["auc"]})
+        lines.append("")
+    return lines, pd.DataFrame(csv_rows)
+
+
+# ---------------------------------------------------------------------------
 # Orchestration
 # ---------------------------------------------------------------------------
 
@@ -705,6 +797,8 @@ def build_all(run_id: str) -> int:
     inv_lines = rank_inversion_e16(df)
     t2_lines, t2_csv = table2_probe_spectrum(df)
     guard_lines = substring_guard(df)
+    budget_lines, budget_csv = budget_e7(df)
+    pile_lines, pile_csv = pile_e10(df)
 
     # text tables
     _write_txt(t1_lines, "table1_main.txt")
@@ -714,24 +808,28 @@ def build_all(run_id: str) -> int:
     _write_txt(acr_lines, "acr_e13.txt")
     _write_txt(inv_lines, "rank_inversion_e16.txt")
     _write_txt(guard_lines, "substring_guard.txt")
+    _write_txt(budget_lines, "budget_e7.txt")
+    _write_txt(pile_lines, "pile_e10.txt")
 
     # tidy CSVs (figure inputs)
     _write_csv(t1_csv, "table1_main.csv")
     _write_csv(t2_csv, "table2_probe_spectrum.csv")
     _write_csv(cap_csv, "capacity_curve.csv")
     _write_csv(freq_csv, "frequency_curve.csv")
+    _write_csv(budget_csv, "budget_e7.csv")
+    _write_csv(pile_csv, "pile_e10.csv")
 
     # combined report (stdout + results/summary_tables.txt for continuity)
     all_lines: List[str] = []
     for block in (t1_lines, t2_lines, cap_lines, freq_lines,
-                  acr_lines, inv_lines, guard_lines):
+                  acr_lines, inv_lines, guard_lines, budget_lines, pile_lines):
         all_lines.extend(block)
     report = "\n".join(all_lines)
     print(report)
     with open(os.path.join(RESULTS_DIR, "summary_tables.txt"), "w") as f:
         f.write(report + "\n")
 
-    print(f"[make_tables] wrote 7 txt + 4 csv to {TABLES_DIR} and "
+    print(f"[make_tables] wrote 9 txt + 6 csv to {TABLES_DIR} and "
           f"results/summary_tables.txt")
     return 0
 

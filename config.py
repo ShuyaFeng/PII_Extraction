@@ -397,6 +397,29 @@ class ExperimentConfig:
     # --- E14 norm-limited soft-prompt sweep ---
     softprompt_norm_grid: List[float] = field(default_factory=lambda: [0.5, 1.0, 2.0, 4.0, 8.0])
 
+    # --- E7 budget-matched fixed-prompt control ---------------------------------
+    # Give the un-optimized natural-prompt baseline the SAME query budget as GCG
+    # (per target: budget = that target's gcg_free forward_passes), so a reviewer
+    # cannot attribute GCG's success to "more queries" rather than "optimization".
+    # Sampling (not greedy) so repeated draws actually explore; capped for cost.
+    fixed_budget_temperature: float = 1.0
+    fixed_budget_top_p: float = 0.95
+    fixed_budget_cap: int = 2000      # hard ceiling on the matched budget/target
+
+    # --- E10 Pythia + the Pile (real model, real corpus; NO fine-tuning) --------
+    # External-validity replication: attack a model we did NOT train (Pythia, which
+    # saw the Pile) on strings that genuinely occur in its training corpus (trained,
+    # measured count>0) vs format-matched strings absent from the sampled Pile
+    # (control). Forcing predicts Adj~0 here too. Data contract: a local Pile shard
+    # at env PII_PILE_SHARD (.jsonl/.txt/.jsonl.zst), or PII_PILE_SMOKE=1 for a tiny
+    # offline synthetic stand-in that exercises the whole path.
+    pile_fields: List[str] = field(default_factory=lambda: ["email", "url", "ipv4", "phone"])
+    pile_min_count: int = 1           # a "trained"/member target must occur >= this
+    pile_n_targets: int = 150         # cap of member targets attacked
+    pile_n_controls: int = 150        # cap of format-matched absent controls
+    pile_ctx_chars: int = 200         # chars of real preceding context kept as anchor
+    pile_max_docs: int = 200_000      # cap documents scanned (bounds wall-clock)
+
     # held-out reference model for target_H_bits + linguistic ppl (reuse ling_cfg)
 
 
