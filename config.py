@@ -491,6 +491,15 @@ _npub = _env_int("PII_N_PUBLIC")
 if _npub is not None:
     data_cfg.n_public_passages = _npub
 
+# Scale the corpus reproducibly from the SLURM script (so the real run does not
+# depend on uncommitted local edits to n_individuals / n_negative_controls).
+_nind = _env_int("PII_N_INDIVIDUALS")
+if _nind is not None:
+    data_cfg.n_individuals = _nind
+_nctrl = _env_int("PII_N_CONTROLS")
+if _nctrl is not None:
+    data_cfg.n_negative_controls = _nctrl
+
 # Safety valve: PII_ALLOW_FILLER=1 permits synthetic filler to top up the public
 # corpus when downloads fall short (e.g. a smoke run on a flaky node). It disables
 # the honesty guard, so DON'T use it for the real study — the corpus becomes
