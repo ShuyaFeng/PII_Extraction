@@ -365,6 +365,42 @@ def fill_template(
 # 4. Create PII documents with controlled frequency
 # ---------------------------------------------------------------------------
 
+def _scale_frequency_groups(
+    frequency_groups: Dict[int, int], n_individuals: int
+) -> List[Tuple[int, int]]:
+    """
+    Scale the {n_people: frequency} groups so the PEOPLE counts sum EXACTLY to
+    n_individuals, preserving each group's proportion.
+
+    Fixes a silent bug: frequency_groups is a fixed dict summing to 100, but
+    n_individuals is configurable (e.g. 200). When they disagreed, the old code
+    assigned frequencies to only the first sum(counts) people and ORPHANED the
+    rest — they got no training documents AND were dropped from target_registry,
+    so half the individuals silently vanished from the study. Scaling keeps the
+    intended distribution shape (e.g. 10/30/60 -> 20/60/120 at n=200) and
+    guarantees every individual lands in exactly one frequency group.
+
+    Returns a list of (people_count, frequency) with sum(people_count) ==
+    n_individuals (the last group absorbs any rounding remainder).
+    """
+    items = sorted(frequency_groups.items())  # (people_count, frequency)
+    total = sum(c for c, _ in items)
+    if not items or total == 0:
+        return [(n_individuals, 1)]
+    if total == n_individuals:
+        return [(c, f) for c, f in items]
+    scaled: List[Tuple[int, int]] = []
+    assigned = 0
+    for i, (count, freq) in enumerate(items):
+        if i == len(items) - 1:
+            c = max(0, n_individuals - assigned)  # last group takes the remainder
+        else:
+            c = max(0, round(count * n_individuals / total))
+        scaled.append((c, freq))
+        assigned += c
+    return scaled
+
+
 def create_pii_documents(
     individuals: List[Dict[str, str]],
     frequency_groups: Dict[int, int],
@@ -378,13 +414,21 @@ def create_pii_documents(
     rng = random.Random(data_cfg.seed)
     template_keys = list(TEMPLATES.keys())
 
-    # Assign individuals to frequency groups
+    # Assign individuals to frequency groups. Counts are scaled to the ACTUAL
+    # number of individuals so none are orphaned when n_individuals != the sum
+    # baked into frequency_groups (see _scale_frequency_groups).
+    scaled_groups = _scale_frequency_groups(frequency_groups, len(individuals))
     idx = 0
     person_freq = []
-    for count, freq in sorted(frequency_groups.items()):
+    for count, freq in scaled_groups:
         for person in individuals[idx : idx + count]:
             person_freq.append((person, freq))
         idx += count
+    if idx < len(individuals):  # safety: never drop a trailing individual
+        for person in individuals[idx:]:
+            person_freq.append((person, scaled_groups[-1][1]))
+    print(f"  Frequency assignment (n={len(individuals)}): "
+          + ", ".join(f"{c}@freq{f}" for c, f in scaled_groups))
 
     documents = []
     target_registry = []
