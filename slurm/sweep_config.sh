@@ -40,6 +40,13 @@ if [ -n "${PII_MAX_TARGETS:-}" ]; then export PII_MAX_TARGETS; fi
 EXPS_FIELD=(E1 E2 E4 E5)
 KGRID=(1 2 3 4 6 8 12 16 20 24 32 48 64)
 
+# --- Optional env overrides so a smoke-scale run can shrink the sweep WITHOUT
+#     editing this file (comma or space separated). These also reach config.py's
+#     Python side (same PII_MODELS/PII_SEEDS names), so bash and Python agree.
+#       PII_MODELS=gpt2 PII_SEEDS=42 bash slurm/submit_full_run.sh
+if [ -n "${PII_MODELS:-}" ]; then IFS=', ' read -r -a MODELS <<< "$PII_MODELS"; fi
+if [ -n "${PII_SEEDS:-}" ];  then IFS=', ' read -r -a SEEDS  <<< "$PII_SEEDS";  fi
+
 # --- Derived counts (used to size the --array ranges) ------------------------
 NMODELS=${#MODELS[@]}
 NSEEDS=${#SEEDS[@]}
