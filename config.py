@@ -514,3 +514,9 @@ if _mqb:
 _rid = os.environ.get("PII_RUN_ID")
 if _rid:
     exp_cfg.run_id = _rid
+
+# Restrict which probes the membership sweep runs (E1/E2). Comma list, e.g.
+# "fixed,gcg_free" for a fast smoke; unset => all probes in exp_cfg.probes.
+_probes = _env_list("PII_PROBES")
+if _probes:
+    exp_cfg.probes = _probes
