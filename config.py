@@ -516,6 +516,12 @@ _soft = _env_int("PII_SOFT_STEPS")
 if _soft:
     discovery_cfg.soft_prompt_steps = _soft
 
+# E3 capacity-sweep target-subset size (the sweep's cost driver). Default 150 is
+# too heavy for big models; the SLURM script can shrink it for a first pass.
+_csn = _env_int("PII_CAP_SWEEP_N")
+if _csn is not None:
+    exp_cfg.capacity_sweep_n_targets = _csn
+
 _mqb = _env_int("PII_MULTIQUERY_BUDGET")
 if _mqb:
     discovery_cfg.multiquery_budget = _mqb

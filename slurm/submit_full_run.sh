@@ -68,11 +68,15 @@ for EXP in "${EXPS_FIELD[@]}"; do
   echo "  $EXP      : job $jid  (array 0-$((NGCGSHARDS-1)))"
   dep_ids+=("$jid")
 done
-jid_e3=$(sbatch --parsable $GPU --time="$EXP_TIME" \
-  --dependency=afterok:"$jid_train" --export="$X" \
-  --array=0-$((NE3SHARDS-1))%"$MAX_CONCURRENT" slurm/exp_capacity.slurm)
-echo "  E3       : job $jid_e3  (array 0-$((NE3SHARDS-1)))"
-dep_ids+=("$jid_e3")
+if [ "${SKIP_E3:-0}" = "1" ]; then
+  echo "  E3       : SKIPPED (SKIP_E3=1)"
+else
+  jid_e3=$(sbatch --parsable $GPU --time="$EXP_TIME" \
+    --dependency=afterok:"$jid_train" --export="$X" \
+    --array=0-$((NE3SHARDS-1))%"$MAX_CONCURRENT" slurm/exp_capacity.slurm)
+  echo "  E3       : job $jid_e3  (array 0-$((NE3SHARDS-1)))"
+  dep_ids+=("$jid_e3")
+fi
 
 # 3) FINALIZE afterok on every experiment array
 dep=$(IFS=:; echo "${dep_ids[*]}")

@@ -46,6 +46,10 @@ KGRID=(1 2 3 4 6 8 12 16 20 24 32 48 64)
 #       PII_MODELS=gpt2 PII_SEEDS=42 bash slurm/submit_full_run.sh
 if [ -n "${PII_MODELS:-}" ]; then IFS=', ' read -r -a MODELS <<< "$PII_MODELS"; fi
 if [ -n "${PII_SEEDS:-}" ];  then IFS=', ' read -r -a SEEDS  <<< "$PII_SEEDS";  fi
+# Narrow which field-experiments run and over which fields (for a focused pass):
+#   PII_EXPS="E1" PII_FIELDS_SWEEP="ssn,email"
+if [ -n "${PII_EXPS:-}" ];        then IFS=', ' read -r -a EXPS_FIELD <<< "$PII_EXPS"; fi
+if [ -n "${PII_FIELDS_SWEEP:-}" ]; then IFS=', ' read -r -a FIELDS     <<< "$PII_FIELDS_SWEEP"; fi
 
 # --- Derived counts (used to size the --array ranges) ------------------------
 NMODELS=${#MODELS[@]}
