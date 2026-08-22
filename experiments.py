@@ -780,12 +780,16 @@ def _membership_sweep(exp_id: str, model_name: str, model_state: str, seed: int,
     ctx = _Ctx(model_name, model_state, seed)
     model, tok = _load_model(model_name, model_state)
 
-    registry = cap_targets(_load_registry())
-    trained, controls = _split_registry(registry)
+    # Cap PER ARM (not the whole registry): the registry is ~1:4 trained:control,
+    # so capping the concatenation would leave only ~N/5 trained. Split first,
+    # then cap each arm to PII_MAX_TARGETS so we get N trained AND N controls.
+    trained, controls = _split_registry(_load_registry())
+    trained = cap_targets(trained)
     # Only attack controls selected by covariate matching (E17), so C is
     # exchangeable with D. If E17 yields nothing (e.g. no controls), fall back
-    # to all controls in the (capped) registry.
+    # to all controls; then cap the control arm to N as well.
     matched = _matched_control_entries(ctx, seed, controls) or controls
+    matched = cap_targets(matched)
 
     # (entry, membership, train_frequency)
     work = ([(e, "trained", int(e["frequency"])) for e in trained]
@@ -903,9 +907,12 @@ def run_E4_anchored_gcg(model_name: str, seed: int) -> str:
     ctx = _Ctx(model_name, "finetuned", seed)
     model, tok = _load_model(model_name, "finetuned")
 
-    registry = cap_targets(_load_registry())
-    trained, controls = _split_registry(registry)
+    # Cap PER ARM (registry is ~1:4 trained:control; capping the concatenation
+    # would starve the trained arm). Split first, then cap each arm to N.
+    trained, controls = _split_registry(_load_registry())
+    trained = cap_targets(trained)
     matched = _matched_control_entries(ctx, seed, controls) or controls
+    matched = cap_targets(matched)
     work = ([(e, "trained", int(e["frequency"])) for e in trained]
             + [(e, "control", 0) for e in matched])
 
@@ -1092,9 +1099,12 @@ def run_E7_budget_matched(model_name: str, seed: int) -> str:
     ctx = _Ctx(model_name, "finetuned", seed)
     model, tok = _load_model(model_name, "finetuned")
 
-    registry = cap_targets(_load_registry())
-    trained, controls = _split_registry(registry)
+    # Cap PER ARM (registry is ~1:4 trained:control; capping the concatenation
+    # would starve the trained arm). Split first, then cap each arm to N.
+    trained, controls = _split_registry(_load_registry())
+    trained = cap_targets(trained)
     matched = _matched_control_entries(ctx, seed, controls) or controls
+    matched = cap_targets(matched)
     work = ([(e, "trained", int(e["frequency"])) for e in trained]
             + [(e, "control", 0) for e in matched])
 
