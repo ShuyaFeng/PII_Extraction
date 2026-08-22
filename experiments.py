@@ -99,6 +99,12 @@ class InstrumentedGCG(GCGAttack):
         self.prefix_ids = prefix_ids  # (1, P) on DEVICE, or None
         self.suffix_ids = suffix_ids  # (1, S) on DEVICE, or None
         self.forward_passes = 0
+        # The embedding matrix can be LARGER than tokenizer.vocab_size — e.g. Pythia
+        # pads its vocab to a multiple of 128 (50304 rows vs a 50254-token vocab).
+        # `one_hot(free_ids, V) @ W` requires V to match the embedding rows, so pin
+        # vocab_size to the embedding size. gpt2 is unchanged (50257 == 50257). This
+        # also keeps the base class's candidate search consistent with our gradient.
+        self.vocab_size = self.model.get_input_embeddings().weight.shape[0]
 
     # -- geometry helpers --
     def _P(self) -> int:
