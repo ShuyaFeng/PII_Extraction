@@ -38,14 +38,16 @@ fi
 # adding them is what lets a backfill actually happen. Big pythias need more VRAM
 # and go to the 48h amperenodes-medium queue. P100 is slower, so exp_time is
 # generous while the scope stays small — SOMETHING running beats waiting forever.)
-# NB: amperenodes has a 12h wall; a per-model E1 now runs BOTH fields in one task
-# (~2x), so anything that needs >12h MUST go to the 48h amperenodes-medium queue.
-# Small models stay on amperenodes,pascalnodes (fast to backfill); big pythias ->
-# medium (already-trained ones skip straight to E1, so only the queue wait remains).
-DEFAULT_SPEC="gpt2|02:00:00|08:00:00|amperenodes,pascalnodes
-gpt2-medium|03:00:00|11:45:00|amperenodes,pascalnodes
-EleutherAI/pythia-1.4b|08:00:00|40:00:00|amperenodes-medium
-EleutherAI/pythia-2.8b|12:00:00|44:00:00|amperenodes-medium"
+# Per-model:  model | train_time | exp_time | partition | max_targets | gcg_iters
+# Scope shrinks with model size so each E1 (BOTH fields in one task) fits where it
+# can actually schedule: small models get many targets on amperenodes,pascalnodes
+# (P100 has a 12h wall AND is ~3x slower, so keep them modest); big pythias get
+# fewer targets/iters on the 48h amperenodes-medium queue. Already-trained models
+# skip straight to E1 (only the queue wait remains).
+DEFAULT_SPEC="gpt2|02:00:00|10:00:00|amperenodes,pascalnodes|25|200
+gpt2-medium|03:00:00|11:45:00|amperenodes,pascalnodes|12|120
+EleutherAI/pythia-1.4b|08:00:00|40:00:00|amperenodes-medium|20|150
+EleutherAI/pythia-2.8b|12:00:00|44:00:00|amperenodes-medium|12|120"
 SPEC="${MODELS_SPEC:-$DEFAULT_SPEC}"
 
 echo "Per-model submission: run_id=$RUN_ID max_targets=$PII_MAX_TARGETS iters=$PII_GCG_ITERS fields=$FIELDS_SWEEP"
@@ -61,14 +63,16 @@ while IFS= read -r _l; do
 done <<< "$SPEC"
 for line in "${SPEC_LINES[@]}"; do
   [ -z "${line// }" ] && continue
-  IFS='|' read -r model ttime etime part <<< "$line"
+  IFS='|' read -r model ttime etime part mtar iters <<< "$line"
+  mtar="${mtar:-$PII_MAX_TARGETS}"; iters="${iters:-$PII_GCG_ITERS}"
   safe=$(printf '%s' "$model" | tr '/' '_')
 
   # E1 runs BOTH fields in ONE task via exp_tier1.slurm -> experiments.py (fields
   # chosen by PII_FIELDS). This AVOIDS exp_field's array-index (model,seed,field)
   # decode, which mis-indexed MODELS[] on per-model submissions and crashed the
-  # email task. Train only if this model has no checkpoint yet (skip when cached).
-  X="ALL,PII_RUN_ID=$RUN_ID,PII_MAX_TARGETS=$PII_MAX_TARGETS,PII_GCG_ITERS=$PII_GCG_ITERS"
+  # email task. Per-model max_targets/iters keep each task inside its partition's
+  # wall. Train only if this model has no checkpoint yet (skip when cached).
+  X="ALL,PII_RUN_ID=$RUN_ID,PII_MAX_TARGETS=$mtar,PII_GCG_ITERS=$iters"
   X="$X,PII_MODELS=$model,PII_SEEDS=$SEEDS_ONE,PII_FIELDS=$FIELDS_SWEEP,EXP=E1,MODEL=$model,SEED=$SEEDS_ONE"
 
   dep=""; tinfo="train=cached"
@@ -82,8 +86,8 @@ for line in "${SPEC_LINES[@]}"; do
   # finalize: afterany so tables regenerate even if E1 partially fails
   jf=$(sbatch --parsable --partition=express $acct --time=00:20:00 \
        --dependency=afterany:"$je" --export="ALL,PII_RUN_ID=$RUN_ID" slurm/exp_finalize.slurm </dev/null)
-  printf '  %-26s %-14s E1=%s  finalize=%s   [%s | E1 %s]\n' \
-    "$model" "$tinfo" "$je" "$jf" "$part" "$etime"
+  printf '  %-26s %-13s E1=%s (n=%s,it=%s) finalize=%s  [%s|%s]\n' \
+    "$model" "$tinfo" "$je" "$mtar" "$iters" "$jf" "$part" "$etime"
 done
 
 echo ""
